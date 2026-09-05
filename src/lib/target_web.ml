@@ -107,3 +107,19 @@ let emit_html ~title ~game_name ~rom_bytes ~vendor_dir =
   w "});\n";
   w "</script>\n</body>\n</html>\n";
   Buffer.contents buf
+
+let name = "web"
+
+let default_uxn5_dir () = Target.resolve_vendor_dir "uxn5"
+
+let bundle ~verbose ~vendor_dir ~rom_path ~output_file =
+  if verbose then Printf.eprintf "Using uxn5: %s\n" vendor_dir;
+  let rom_bytes = Target.read_file_bin rom_path in
+  let html = emit_html
+    ~title:(Printf.sprintf "%s - etal" (Filename.basename output_file))
+    ~game_name:(Filename.basename output_file)
+    ~rom_bytes ~vendor_dir in
+  let oc = open_out output_file in
+  output_string oc html;
+  close_out oc;
+  if verbose then Printf.eprintf "Wrote web bundle to %s\n" output_file

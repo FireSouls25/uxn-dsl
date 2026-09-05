@@ -3,7 +3,7 @@ OCAMLC = ocamlc
 OCAMLOPT = ocamlopt
 OCAMLDEP = ocamldep
 
-SRCS_LIB = lib/ast.ml lib/token.ml lib/lexer.ml lib/parser.ml lib/types.ml lib/expand.ml lib/loader.ml lib/web.ml lib/codegen.ml
+SRCS_LIB = lib/ast.ml lib/token.ml lib/lexer.ml lib/parser.ml lib/types.ml lib/expand.ml lib/loader.ml lib/target.ml lib/target_native.ml lib/target_web.ml lib/codegen.ml
 SRCS_BIN = bin/etal.ml
 SRCS = $(SRCS_LIB) $(SRCS_BIN)
 OBJS_LIB = $(SRCS_LIB:.ml=.cmo)
