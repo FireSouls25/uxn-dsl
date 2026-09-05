@@ -98,6 +98,24 @@ type data_decl = {
   data_bytes: int list;
 }
 
+(* An asset embeds a raw sprite file (.chr = 16 bytes/tile 2bpp,
+   .icn = 8 bytes/tile 1bpp) as a hex blob at codegen time.
+   Declared as `data name = file("path");` with the path resolved
+   relative to the file containing the declaration. *)
+type asset_decl = {
+  asset_name: string;
+  asset_path: string;
+}
+
+(* A buffer is a fixed-size array in main RAM (absolute addressing).
+   Unlike zero-page globals, buffers can hold hundreds of bytes
+   (e.g. a screen grid or snake tail ring). *)
+type buffer_decl = {
+  buf_name: string;
+  buf_len: int;
+  buf_elem: typ;
+}
+
 type decl =
   | FuncDecl of func
   | MacroDecl of macro_decl
@@ -107,6 +125,8 @@ type decl =
   | DeviceDecl of device_decl
   | GroupDecl of group_decl
   | DataDecl of data_decl
+  | AssetDecl of asset_decl
+  | BufferDecl of buffer_decl
   | RawDecl of string  (* Raw Uxntal declaration *)
 
 type program = decl list

@@ -27,7 +27,6 @@ type codegen_env = {
   mutable global_vars: (string * var_info) list;
   mutable local_vars: (string * var_info) list;
   mutable next_global_addr: int;
-  mutable next_local_offset: int;
   mutable entry_code: Buffer.t;
   mutable func_code: Buffer.t;
   mutable code: Buffer.t;
@@ -40,13 +39,21 @@ type codegen_env = {
   mutable constants: string list;
   mutable zero_order: zero_item list;
   mutable func_sigs: (string * int list) list;
+  (* Main-RAM buffer region for `buffer` decls: base address plus
+     next free address; (name, addr, size) in allocation order. *)
+  mutable next_buffer_addr: int;
+  mutable buffer_order: (string * int * int) list;
+  (* Zero-page bytes reserved so far (globals + spilled locals). *)
+  mutable zp_used: int;
 }
+
+(* Buffers live in main RAM, clear of code/data (loaded at 0x100). *)
+let buffer_region_base = 0x2000
 
 let create_env () = {
   global_vars = [];
   local_vars = [];
   next_global_addr = 0x00;
-  next_local_offset = 0;
   entry_code = Buffer.create 1024;
   func_code = Buffer.create 1024;
   code = Buffer.create 1024;
@@ -59,6 +66,9 @@ let create_env () = {
   constants = [];
   zero_order = [];
   func_sigs = [];
+  next_buffer_addr = buffer_region_base;
+  buffer_order = [];
+  zp_used = 0;
 }
 
 let lookup_device_port env device port =
@@ -117,7 +127,6 @@ let start_func env name =
   env.in_func <- true;
   env.func_name <- name;
   env.local_vars <- [];
-  env.next_local_offset <- 0;
   local_counter := 0
 
 let end_func env =
@@ -125,13 +134,27 @@ let end_func env =
   env.local_vars <- []
 
 let add_local_var env name typ =
+  (* Locals (and params) live in zero-page under a per-function mangled
+     name. Static storage like before (no reentrancy change), but with
+     absolute LDZ/STZ access there is no +/-127 relative range limit,
+     so functions of any size work. Reservation is recorded in
+     zero_order and emitted in the |00 block. *)
   let size = typ_size typ in
-  let offset = env.next_local_offset in
-  env.next_local_offset <- env.next_local_offset + size;
-  let addr_str = sprintf ",&%s" name in
-  let info = { name; addr = addr_str; is_local = true; typ; size } in
+  let mangled = env.func_name ^ "__" ^ name in
+  let info = { name; addr = mangled; is_local = true; typ; size } in
   env.local_vars <- (name, info) :: env.local_vars;
-  addr_str
+  (* Reserve once per (function, name): repeated declarations share
+     the slot, as before. *)
+  let already =
+    List.exists (function ZVar (n, _) -> n = mangled | _ -> false) env.zero_order
+  in
+  if not already then begin
+    env.zero_order <- ZVar (mangled, size) :: env.zero_order;
+    env.zp_used <- env.zp_used + size;
+    if env.zp_used > 0x100 then
+      failwith (Printf.sprintf "out of zero-page memory (%d bytes used)" env.zp_used);
+  end;
+  mangled
 
 let rec field_path expr =
   match expr with
@@ -157,6 +180,17 @@ let rec expr_is_u8 env expr =
   | BinOp (Gt, _, _) | BinOp (Le, _, _) | BinOp (Ge, _, _)
   | BinOp (AndAnd, _, _) | BinOp (OrOr, _, _) -> true (* bool byte *)
   | UnOp (Not, _) -> true (* bool byte *)
+  | Index (Ident n, _) ->
+    (try
+       let info =
+         try List.assoc n env.local_vars
+         with Not_found -> List.assoc n env.global_vars
+       in
+       (match info.typ with
+        | Ast.TypArray (elem, _) | Ast.TypPointer elem ->
+          (match elem with Ast.TypU8 | Ast.TypBool -> true | _ -> false)
+        | _ -> false)
+     with Not_found -> false)
   | _ -> false
 
 let rec codegen_expr env expr =
@@ -177,7 +211,8 @@ let rec codegen_expr env expr =
     else
       (try
         let info = List.assoc name env.local_vars in
-        if info.size = 1 then emit env "%s LDR" info.addr else emit env "%s LDR2" info.addr
+        (* Locals are zero-page residents under mangled names. *)
+        if info.size = 1 then emit env ".%s LDZ" info.addr else emit env ".%s LDZ2" info.addr
       with Not_found ->
         try
           let info = List.assoc name env.global_vars in
@@ -213,11 +248,24 @@ let rec codegen_expr env expr =
     in
     (match op with
      | Lshift | Rshift ->
+       (* Real SFT2. Control byte: high nibble = left distance,
+          low nibble = right distance (rightward first). Constant
+          amounts fold to one literal (masked mod 16); dynamic
+          amounts go through the high nibble via #40 SFT. *)
        codegen_rhs env left 2;
        emit env " ";
-       codegen_rhs env right 2;
-       emit env " ";
-       (match op with Lshift -> emit env "#02 MUL2" | Rshift -> emit env "#02 DIV2" | _ -> ())
+       (match right with
+        | IntLit n ->
+          let c = (match op with
+            | Lshift -> ((n land 0x0f) lsl 4)
+            | _ -> (n land 0x0f)) in
+          emit env "#%02x SFT2" c
+        | _ ->
+          codegen_rhs env right 1;
+          (match op with
+           | Lshift -> emit env " #40 SFT SFT2"
+           | _ -> emit env " SFT2"
+           | _ -> ()))
      | _ ->
        emit_operand left;
        emit env " ";
@@ -292,27 +340,47 @@ let rec codegen_expr env expr =
         | Ident name -> (try Some (List.assoc name env.func_sigs) with Not_found -> None)
         | _ -> None
       in
-      (match param_sizes with
-       | Some sizes ->
-         List.iter2 (fun arg sz ->
-           codegen_rhs env arg sz;
-           emit env " "
-         ) args sizes
-       | None ->
-         List.iter (fun arg ->
-           codegen_expr env arg;
-           emit env " "
-         ) args);
+      (* Builtin print("...") inlines a string printer and takes over
+         arg emission (the literal must not be pushed as a value). *)
+      let is_print_lit =
+        match func_expr, args with
+        | Ident "print", [StringLit _] -> true
+        | _ -> false
+      in
+      if not is_print_lit then
+        (match param_sizes with
+        | Some sizes ->
+          List.iter2 (fun arg sz ->
+            codegen_rhs env arg sz;
+            emit env " "
+          ) args sizes
+        | None ->
+          List.iter (fun arg ->
+            codegen_expr env arg;
+            emit env " "
+          ) args);
       (match func_expr with
+      | Ident "print" ->
+        (match args with
+        | [StringLit s] ->
+          (* Inline NUL-terminated string printer:
+             ;str &loop LDAk .Console/write DEO INC2 LDAk ?&loop POP2 *)
+          let label = make_string_label env s in
+          let loop = new_local_label env "print" in
+          emit env ";%s &%s LDAk .Console/write DEO INC2 LDAk ?&%s POP2"
+            label loop loop
+        | _ ->
+          (* Args already emitted above; a non-literal print call
+             falls through to a (likely undefined) JSR. *)
+          emit env ";print JSR2")
       | Ident name ->
         emit env ";%s JSR2" name
       | _ -> failwith "Invalid function expression")
     end
   | Index (arr, index) ->
-    codegen_expr env arr;
+    let esz = codegen_index_addr env arr index in
     emit env " ";
-    codegen_expr env index;
-    emit env "ADD2 LDA2"
+    if esz = 1 then emit env "LDA" else emit env "LDA2"
   | Field (expr, field) ->
     (match expr with
     | Ident base when is_device env base ->
@@ -337,7 +405,7 @@ let rec codegen_expr env expr =
       (try
         let info = List.assoc name env.local_vars in
         codegen_rhs env right info.size;
-        if info.size = 1 then emit env " %s STR" info.addr else emit env " %s STR2" info.addr
+        if info.size = 1 then emit env " .%s STZ" info.addr else emit env " .%s STZ2" info.addr
       with Not_found ->
         try
           let info = List.assoc name env.global_vars in
@@ -365,6 +433,14 @@ let rec codegen_expr env expr =
       | _ ->
         codegen_expr env right;
         emit env " #0000")
+    | Index (arr, index) ->
+      (* STA expects ( value addr* -- ): value first, address on top. *)
+      let esz, _ = index_array_info env arr in
+      codegen_rhs env right esz;
+      emit env " ";
+      ignore (codegen_index_addr env arr index);
+      emit env " ";
+      if esz = 1 then emit env "STA" else emit env "STA2"
     | _ -> failwith "Invalid assignment target")
   | CompoundLit (name, fields) ->
     emit env ";%s" name
@@ -386,6 +462,42 @@ and codegen_rhs env expr dest_size =
     | _ -> codegen_expr env expr; emit env " NIP"
   else
     codegen_expr env expr
+
+(* Element size + addressing mode for arr[index]. Returns
+   (elem_size, use_addr_base): named arrays/buffers use `;name`,
+   pointers evaluate to an address. Pure: emits nothing. *)
+and index_array_info env arr =
+  match arr with
+  | Ident n ->
+    (try
+       let info =
+         try List.assoc n env.local_vars
+         with Not_found -> List.assoc n env.global_vars
+       in
+       (match info.typ with
+        | Ast.TypArray (elem, _) ->
+          if info.is_local then
+            failwith (Printf.sprintf
+              "array `%s` is a local; only global arrays and buffers can be indexed" n);
+          (typ_size elem, true)
+        | Ast.TypPointer elem -> (typ_size elem, false)
+        | _ -> failwith (Printf.sprintf "`%s` is not an array" n))
+     with Not_found ->
+       failwith (Printf.sprintf "undefined array `%s`" n))
+  | _ -> (2, false)
+
+(* Emit base-address + scaled index for arr[index], leaving the absolute
+   address (short) on the stack. Returns the element size in bytes. *)
+and codegen_index_addr env arr index =
+  let elem_size, use_addr_base = index_array_info env arr in
+  (match arr with
+   | Ident n when use_addr_base -> emit env ";%s" n
+   | _ -> codegen_expr env arr);
+  emit env " ";
+  codegen_rhs env index 2;
+  if elem_size = 2 then emit env " #0002 MUL2";
+  emit env " ADD2";
+  elem_size
 
 let rec codegen_stmt env stmt =
   match stmt with
@@ -449,32 +561,32 @@ let rec codegen_stmt env stmt =
     let addr = add_local_var env var_name Ast.TypU16 in
     (* init var to start (promote to short) *)
     codegen_rhs env start_expr 2;
-    emit env " %s STR2\n" addr;
+    emit env " .%s STZ2\n" addr;
     let loop_label = new_local_label env "for" in
     let cont_label = new_local_label env "for_cont" in
     let end_label = new_local_label env "for_end" in
     (* for i in start..end == while(i < end) { body; i++ } *)
     emit env "&%s\n" loop_label;
-    emit env "%s LDR2 " addr;
+    emit env ".%s LDZ2 " addr;
     codegen_rhs env end_expr 2;
     emit env " LTH2 ?&%s\n" cont_label;
     emit env " !&%s\n" end_label;
     emit env "&%s\n" cont_label;
     List.iter (codegen_stmt env) body;
-    emit env "%s LDR2 INC2 %s STR2\n" addr addr;
+    emit env ".%s LDZ2 INC2 .%s STZ2\n" addr addr;
     emit env " !&%s\n" loop_label;
     emit env "&%s\n" end_label
   | Block stmts ->
     List.iter (codegen_stmt env) stmts
   | VarDecl (name, typ, init) ->
     if env.in_func then begin
-      (* Local variable - use relative addressing *)
+      (* Local variable - zero-page slot under a mangled name *)
       let addr = add_local_var env name typ in
       match init with
       | Some expr ->
         let size = typ_size typ in
         codegen_rhs env expr size;
-        if size = 1 then emit env " %s STR\n" addr else emit env " %s STR2\n" addr
+        if size = 1 then emit env " .%s STZ\n" addr else emit env " .%s STZ2\n" addr
       | None -> ()
     end else begin
       (* Global variable - use zero-page addressing *)
@@ -499,7 +611,7 @@ let rec codegen_stmt env stmt =
     if env.in_func then begin
       let addr = add_local_var env name Ast.TypU16 in
       codegen_rhs env expr 2;
-      emit env " %s STR2\n" addr
+      emit env " .%s STZ2\n" addr
     end else begin
       let addr =
         try (List.assoc name env.global_vars).addr
@@ -539,49 +651,53 @@ let rec codegen_stmt env stmt =
   | RawStmt s ->
     emit env "%s\n" s
 
-let collect_local_vars fn_def =
-  let vars = Hashtbl.create 16 in
-  let rec collect_stmt stmt =
-    match stmt with
-    | VarDecl (name, typ, _) -> Hashtbl.replace vars name (typ_size typ)
-    | ConstDecl (name, _) -> Hashtbl.replace vars name 2
-    | Block stmts -> List.iter collect_stmt stmts
-    | If (_, then_body, elifs, else_body) ->
-      List.iter collect_stmt then_body;
-      List.iter (fun (_, body) -> List.iter collect_stmt body) elifs;
-      List.iter collect_stmt else_body
-    | While (_, body) -> List.iter collect_stmt body
-    | For (var_name, _, _, body) -> Hashtbl.replace vars var_name 2; List.iter collect_stmt body
-    | _ -> ()
-  in
-  List.iter collect_stmt fn_def.body;
-  vars
-
 let codegen_func env (fn_def : Ast.func) =
-  let local_vars = collect_local_vars fn_def in
-  (* Add params to local vars for reservaion *)
-  List.iter (fun (p: Ast.param) -> Hashtbl.replace local_vars p.name (typ_size p.typ)) fn_def.params;
   (* Record signature for call-site arg promotion (u8 literal -> short). *)
   env.func_sigs <- (fn_def.name, List.map (fun (p: Ast.param) -> typ_size p.typ) fn_def.params) :: env.func_sigs;
   Buffer.add_string env.code (sprintf "\n@%s ( -- )\n" fn_def.name);
   start_func env fn_def.name;
-  (* Handle params: store from stack to locals *)
+  (* Handle params: store from stack to zero-page slots *)
   List.iter (fun (p: Ast.param) ->
     let addr = add_local_var env p.name p.typ in
     let size = typ_size p.typ in
     if size = 1 then
-      Buffer.add_string env.code (sprintf "    %s STR\n" addr)
+      Buffer.add_string env.code (sprintf "    .%s STZ\n" addr)
     else
-      Buffer.add_string env.code (sprintf "    %s STR2\n" addr)
+      Buffer.add_string env.code (sprintf "    .%s STZ2\n" addr)
   ) (List.rev fn_def.params);
   List.iter (codegen_stmt env) fn_def.body;
   if fn_def.is_event then emit env "BRK\n" else emit env "JMP2r\n";
-  (* Reserve locals AFTER return so they are not executed.
-     Relative ,&var uses reach them forward/backward. *)
-  Hashtbl.iter (fun name size ->
-    Buffer.add_string env.code (sprintf "    &%s $%d\n" name size)
-  ) local_vars;
   end_func env
+
+(* Read a sprite asset file (.chr = 16 bytes/tile 2bpp planar,
+   .icn = 8 bytes/tile 1bpp) into a byte list. The loader resolves
+   the path against the declaring file, so it is absolute here. *)
+let read_asset_bytes name path =
+  let ic =
+    try open_in_bin path
+    with Sys_error _ ->
+      failwith (Printf.sprintf "asset `%s`: cannot read `%s`" name path)
+  in
+  let n = in_channel_length ic in
+  let s = really_input_string ic n in
+  close_in ic;
+  let ext =
+    try
+      let dot = String.rindex path '.' in
+      String.lowercase_ascii (String.sub path (dot + 1) (String.length path - dot - 1))
+    with Not_found -> ""
+  in
+  let tile =
+    match ext with
+    | "chr" -> 16
+    | "icn" -> 8
+    | _ -> failwith (Printf.sprintf
+      "asset `%s`: unknown type `%s` (want .chr for 2bpp or .icn for 1bpp)" name path)
+  in
+  if n mod tile <> 0 then
+    failwith (Printf.sprintf
+      "asset `%s`: %d bytes is not a multiple of %d (one %s tile)" name n tile ext);
+  List.init n (fun i -> Char.code s.[i])
 
 let encode_string s =
   let buf = Buffer.create 64 in
@@ -631,6 +747,9 @@ let codegen_program program =
         with Not_found ->
           let addr_val = env.next_global_addr in
           env.next_global_addr <- env.next_global_addr + size;
+          env.zp_used <- env.zp_used + size;
+          if env.zp_used > 0x100 then
+            failwith (Printf.sprintf "out of zero-page memory (%d bytes used)" env.zp_used);
           let addr_str = sprintf "$%02x" addr_val in
           let info = { name; addr = addr_str; is_local = false; typ; size } in
           env.global_vars <- (name, info) :: env.global_vars;
@@ -676,7 +795,13 @@ let codegen_program program =
       env.groups <- (g.group_name, field_sizes) :: env.groups;
       let base_addr = env.next_global_addr in
       env.next_global_addr <- env.next_global_addr + base_size;
-      List.iter (fun (_, sz) -> env.next_global_addr <- env.next_global_addr + sz) field_sizes;
+      let total = ref base_size in
+      List.iter (fun (_, sz) ->
+        env.next_global_addr <- env.next_global_addr + sz;
+        total := !total + sz) field_sizes;
+      env.zp_used <- env.zp_used + !total;
+      if env.zp_used > 0x100 then
+        failwith (Printf.sprintf "out of zero-page memory (%d bytes used)" env.zp_used);
       let base_info = { name = g.group_name; addr = sprintf "$%02x" base_addr; is_local = false; typ = g.base_typ; size = base_size } in begin
         env.zero_order <- ZGroup (g.group_name, base_size, field_sizes) :: env.zero_order;
         env.global_vars <- (g.group_name, base_info) :: env.global_vars
@@ -685,6 +810,25 @@ let codegen_program program =
       Buffer.add_string env.data (sprintf "@%s [ " d.data_name);
       List.iter (fun b -> Buffer.add_string env.data (sprintf "%02x " b)) d.data_bytes;
       Buffer.add_string env.data "]\n"
+    | AssetDecl a ->
+      let bytes = read_asset_bytes a.asset_name a.asset_path in
+      Buffer.add_string env.data (sprintf "@%s [ " a.asset_name);
+      List.iter (fun b -> Buffer.add_string env.data (sprintf "%02x " b)) bytes;
+      Buffer.add_string env.data "]\n"
+    | BufferDecl b ->
+      let esz = (match b.buf_elem with
+        | Ast.TypU8 | Ast.TypBool -> 1
+        | Ast.TypU16 -> 2
+        | _ -> failwith (Printf.sprintf "buffer `%s` must hold u8/u16/bool" b.buf_name)) in
+      let total = esz * b.buf_len in
+      let addr = env.next_buffer_addr in
+      if addr + total > 0x10000 then
+        failwith (Printf.sprintf "buffer `%s` (%d bytes) exceeds addressable memory" b.buf_name total);
+      env.next_buffer_addr <- addr + total;
+      env.buffer_order <- env.buffer_order @ [(b.buf_name, addr, total)];
+      let info = { name = b.buf_name; addr = sprintf "$%04x" addr;
+        is_local = false; typ = Ast.TypArray (b.buf_elem, b.buf_len); size = total } in
+      env.global_vars <- (b.buf_name, info) :: env.global_vars
     | RawDecl raw ->
       (* Emitted with the data section (main RAM): raw blocks usually
          define data/tables, which drifblim forbids in zero-page.
@@ -713,8 +857,11 @@ let codegen_program program =
     Buffer.add_string buf "\n"
   end else if List.length env.global_vars > 0 then begin
     Buffer.add_string buf "|00\n";
+    let is_buffered name =
+      List.exists (fun (n, _, _) -> n = name) env.buffer_order
+    in
     List.iter (fun (_, info) ->
-      if not (List.mem_assoc info.name env.groups) then
+      if not (List.mem_assoc info.name env.groups) && not (is_buffered info.name) then
         Buffer.add_string buf (sprintf "    @%s $%d\n" info.name info.size)
     ) (List.rev env.global_vars);
     Buffer.add_string buf "\n"
@@ -727,6 +874,14 @@ let codegen_program program =
   Buffer.add_string buf (Buffer.contents env.code);
   Buffer.add_string buf "\n";
   Buffer.add_string buf (Buffer.contents env.data);
+
+  (* Main-RAM buffers at absolute addresses. *)
+  if List.length env.buffer_order > 0 then begin
+    Buffer.add_string buf "\n";
+    List.iter (fun (name, addr, total) ->
+      Buffer.add_string buf (sprintf "|%04x @%s $%d\n" addr name total)
+    ) env.buffer_order;
+  end;
 
   if List.length env.strings > 0 then begin
     Buffer.add_string buf "\n";

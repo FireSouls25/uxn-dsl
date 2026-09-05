@@ -278,6 +278,12 @@ let type_check_program program =
       let fields = List.map (fun (fname, ftyp) -> (fname, ftyp)) g.fields in
       add_group global_env g.group_name fields
     | DataDecl _ -> ()
+    | AssetDecl _ -> ()
+    | BufferDecl b ->
+      (match b.buf_elem with
+      | TypU8 | TypU16 | TypBool -> ()
+      | _ -> failwith (Printf.sprintf "buffer `%s` must hold u8/u16/bool" b.buf_name));
+      add_var global_env b.buf_name (TypArray (b.buf_elem, b.buf_len))
     | RawDecl _ -> ()
   ) program;
   global_env

@@ -17,6 +17,8 @@ let decl_name = function
   | DeviceDecl d -> Some ("device", d.device_name)
   | GroupDecl g -> Some ("group", g.group_name)
   | DataDecl d -> Some ("data", d.data_name)
+  | AssetDecl a -> Some ("asset", a.asset_name)
+  | BufferDecl b -> Some ("buffer", b.buf_name)
   | ImportDecl _ | RawDecl _ -> None
 
 (* Minimal path normalization (no symlink resolution): collapse
@@ -53,6 +55,16 @@ let load_program entry =
   let entry = normalize (absolutize entry) in
   let defined : (string, string) Hashtbl.t = Hashtbl.create 64 in
   let loaded = ref [] in
+  let check_dup d path =
+    match decl_name d with
+    | Some (kind, n) ->
+      if Hashtbl.mem defined n then
+        failwith (Printf.sprintf
+          "duplicate definition of %s `%s` (also defined in `%s`, now in `%s`)"
+          kind n (Hashtbl.find defined n) path)
+      else Hashtbl.add defined n path
+    | None -> ()
+  in
   let rec load path importer visited =
     if List.mem path visited then
       failwith (Printf.sprintf "cyclic import involving `%s`" path);
@@ -68,15 +80,19 @@ let load_program entry =
           let target = normalize
             (if Filename.is_relative p then Filename.concat base p else p) in
           load target path (path :: visited)
+        | AssetDecl a as d ->
+          (* Resolve asset paths against the file declaring them,
+             so codegen (which runs after splicing) needs no context. *)
+          let fixed =
+            if Filename.is_relative a.asset_path then
+              { a with asset_path = normalize
+                (Filename.concat (Filename.dirname path) a.asset_path) }
+            else a
+          in
+          check_dup (AssetDecl fixed) path;
+          [AssetDecl fixed]
         | d ->
-          (match decl_name d with
-          | Some (kind, n) ->
-            if Hashtbl.mem defined n then
-              failwith (Printf.sprintf
-                "duplicate definition of %s `%s` (also defined in `%s`, now in `%s`)"
-                kind n (Hashtbl.find defined n) path)
-            else Hashtbl.add defined n path
-          | None -> ());
+          check_dup d path;
           [d]
       ) decls
     end

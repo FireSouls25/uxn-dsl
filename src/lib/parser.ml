@@ -376,6 +376,12 @@ and parse_stmt parser =
         let f = expect_ident parser in
         left := Field (!left, f);
         parse_field_chain ()
+      | LBRACKET ->
+        ignore (advance parser);
+        let index = parse_expr parser in
+        expect parser RBRACKET;
+        left := Index (!left, index);
+        parse_field_chain ()
       | _ -> ()
     in
     parse_field_chain ();
@@ -588,25 +594,56 @@ let parse_decl parser =
     (match peek parser with
     | ASSIGN -> ignore (advance parser)
     | _ -> ());
-    expect parser LBRACKET;
-    let bytes = ref [] in
-    let rec parse_bytes () =
-      match peek parser with
-      | RBRACKET -> ignore (advance parser)
-      | INT_LITERAL n ->
-        ignore (advance parser);
-        bytes := n :: !bytes;
-        (match peek parser with
-        | COMMA -> ignore (advance parser)
-        | _ -> ());
-        parse_bytes ()
-      | _ -> failwith (Printf.sprintf "Expected byte or ], got %s" (token_to_string (peek parser)))
+    let parse_inline_bytes () =
+      expect parser LBRACKET;
+      let bytes = ref [] in
+      let rec parse_bytes () =
+        match peek parser with
+        | RBRACKET -> ignore (advance parser)
+        | INT_LITERAL n ->
+          ignore (advance parser);
+          bytes := n :: !bytes;
+          (match peek parser with
+          | COMMA -> ignore (advance parser)
+          | _ -> ());
+          parse_bytes ()
+        | _ -> failwith (Printf.sprintf "Expected byte or ], got %s" (token_to_string (peek parser)))
+      in
+      parse_bytes ();
+      (match peek parser with
+      | SEMICOLON -> ignore (advance parser)
+      | _ -> ());
+      DataDecl { data_name; data_bytes = List.rev !bytes }
     in
-    parse_bytes ();
+    (match peek parser with
+    | IDENT s when s = "file" ->
+      ignore (advance parser);
+      expect parser LPAREN;
+      let path =
+        match advance parser with
+        | STRING_LITERAL p -> p
+        | t -> failwith (Printf.sprintf "Expected asset path string, got %s" (token_to_string t))
+      in
+      expect parser RPAREN;
+      (match peek parser with
+      | SEMICOLON -> ignore (advance parser)
+      | _ -> ());
+      AssetDecl { asset_name = data_name; asset_path = path }
+    | _ -> parse_inline_bytes ())
+  | BUFFER ->
+    ignore (advance parser);
+    let buf_name = expect_ident parser in
+    expect parser LBRACKET;
+    let buf_len = expect_int parser in
+    expect parser RBRACKET;
+    expect parser COLON;
+    let buf_elem = parse_typ parser in
     (match peek parser with
     | SEMICOLON -> ignore (advance parser)
     | _ -> ());
-    DataDecl { data_name; data_bytes = List.rev !bytes }
+    if buf_len <= 0 then
+      failwith (Printf.sprintf "buffer `%s` must have positive length" buf_name);
+    BufferDecl { buf_name; buf_len; buf_elem }
   | IDENT name ->
     ignore (advance parser);
     (match peek parser with

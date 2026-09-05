@@ -205,6 +205,7 @@ let keyword_or_ident s =
   | "import" -> IMPORT
   | "raw" -> RAW
   | "macro" -> MACRO
+  | "buffer" -> BUFFER
   | "device" -> DEVICE
   | "goto" -> GOTO
   | "data" -> DATA

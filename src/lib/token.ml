@@ -23,6 +23,7 @@ type token =
   | RAW
   | RAW_BLOCK of string
   | MACRO
+  | BUFFER
   | DEVICE
   | GOTO
   | DATA
@@ -113,6 +114,7 @@ let token_to_string = function
   | RAW -> "raw"
   | RAW_BLOCK s -> s
   | MACRO -> "macro"
+  | BUFFER -> "buffer"
   | DEVICE -> "device"
   | GOTO -> "goto"
   | DATA -> "data"
