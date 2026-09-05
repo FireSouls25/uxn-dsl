@@ -2,7 +2,7 @@
 
 open Printf
 
-let usage = "Usage: etal [options] <input.ux>\n\nOptions:\n  -o <output>    Output file (default depends on mode)\n  -t             Output Uxntal source (.tal)\n  -r             Output assembled ROM (.rom)\n  -v             Verbose output\n  -h             Show this help\n\nWith neither -t nor -r, etal outputs a single self-contained\nexecutable: the vendored uxn vm plus the assembled ROM. Running\nit launches the ROM in the vm. Extra arguments are passed to the\nvm (e.g. ./game -2 for 2x zoom).\n"
+let usage = "Usage: etal [options] <input.ux>\n\nOptions:\n  -o <output>    Output file (default depends on mode)\n  -t             Output Uxntal source (.tal)\n  -r             Output assembled ROM (.rom)\n  --target <t>   Bundle target: native (default) or web (single .html)\n  -v             Verbose output\n  -h             Show this help\n\nWith neither -t nor -r, etal outputs a single self-contained\nbundle: the vendored uxn vm plus the assembled ROM (native), or\na playable web page with the vendored uxn5 emulator (--target web).\nExtra native-bundle arguments are passed to the vm\n(e.g. ./game -2 for 2x zoom).\n"
 
 (* Resolve a vendored/dev tool path. Prefers the vendor/ directory next
    to the etal executable, falls back to the uxn2 checkout. *)
@@ -18,6 +18,22 @@ let resolve_tool filename =
   let rec find = function
     | [] -> Filename.concat "uxn2/bin" filename
     | p :: ps -> if Sys.file_exists p then p else find ps
+  in
+  find candidates
+
+(* Resolve a vendored directory (e.g. uxn5). Prefers vendor/ next to
+   the etal executable, falls back to the checkout layout. *)
+let resolve_vendor_dir dirname =
+  let exe_dir = Filename.dirname Sys.executable_name in
+  let candidates = [
+    Filename.concat (Filename.concat exe_dir "vendor") dirname;
+    Filename.concat exe_dir dirname;
+    Filename.concat (Filename.concat exe_dir "../vendor") dirname;
+    Filename.concat "src/vendor" dirname;
+  ] in
+  let rec find = function
+    | [] -> Filename.concat "src/vendor" dirname
+    | p :: ps -> if Sys.file_exists p && Sys.is_directory p then p else find ps
   in
   find candidates
 
@@ -98,12 +114,14 @@ let () =
   let output_file = ref None in
   let emit_tal = ref false in
   let emit_rom = ref false in
+  let target = ref "native" in
   let verbose = ref false in
 
   let speclist = [
     ("-o", Arg.String (fun s -> output_file := Some s), "Output file");
     ("-t", Arg.Unit (fun () -> emit_tal := true), "Output Uxntal only");
     ("-r", Arg.Unit (fun () -> emit_rom := true), "Output ROM only");
+    ("--target", Arg.String (fun s -> target := s), "Bundle target: native (default) or web");
     ("-v", Arg.Unit (fun () -> verbose := true), "Verbose output");
   ] in
 
@@ -115,6 +133,13 @@ let () =
   end;
 
   let mode = if !emit_tal then `Tal else if !emit_rom then `Rom else `Bundle in
+
+  let target =
+    match !target with
+    | "native" -> `Native
+    | "web" -> `Web
+    | s -> eprintf "Error: unknown --target `%s` (want native or web)\n" s; exit 1
+  in
 
   let input_file = match !input_file with
     | Some f -> f
@@ -128,7 +153,7 @@ let () =
       (match mode with
       | `Tal -> base ^ ".tal"
       | `Rom -> base ^ ".rom"
-      | `Bundle -> base)
+      | `Bundle -> (match target with `Native -> base | `Web -> base ^ ".html"))
   in
 
   if !verbose then eprintf "Compiling %s to %s\n" input_file output_file;
@@ -202,9 +227,24 @@ let () =
       Sys.remove temp_rom;
       if !verbose then eprintf "Wrote ROM to %s\n" output_file
     | `Bundle ->
-      build_bundle ~verbose:!verbose ~uxn2_path ~rom_path:temp_rom ~output_file;
-      Sys.remove temp_rom;
-      if !verbose then eprintf "Wrote executable bundle to %s\n" output_file
+      (match target with
+      | `Native ->
+        build_bundle ~verbose:!verbose ~uxn2_path ~rom_path:temp_rom ~output_file;
+        Sys.remove temp_rom;
+        if !verbose then eprintf "Wrote executable bundle to %s\n" output_file
+      | `Web ->
+        let vendor_dir = resolve_vendor_dir "uxn5" in
+        if !verbose then eprintf "Using uxn5: %s\n" vendor_dir;
+        let rom_bytes = read_file_bin temp_rom in
+        Sys.remove temp_rom;
+        let html = Web.emit_html
+          ~title:(Printf.sprintf "%s - etal" (Filename.basename output_file))
+          ~game_name:(Filename.basename output_file)
+          ~rom_bytes ~vendor_dir in
+        let oc = open_out output_file in
+        output_string oc html;
+        close_out oc;
+        if !verbose then eprintf "Wrote web bundle to %s\n" output_file)
     | `Tal -> assert false));
 
   printf "Success: %s -> %s\n" input_file output_file
