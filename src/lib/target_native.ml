@@ -10,9 +10,26 @@ open Printf
 
 let name = "native"
 
-let default_uxn2_path () = Target.resolve_tool "uxn2"
+(* Per-OS VM rows. Today only the host row exists; macOS/Windows rows
+   plug in here without touching the driver (see vendor/BUILD.md).
+   Lookup keeps legacy fallbacks so older checkouts keep working. *)
+let default_uxn2_path () =
+  let exe_dir = Filename.dirname Sys.executable_name in
+  let candidates = [
+    Filename.concat (Filename.concat (Filename.concat exe_dir "vendor") "linux-x86_64") "uxn2";
+    Target.resolve_tool "uxn2";
+  ] in
+  let rec find = function
+    | [] -> Target.resolve_tool "uxn2"
+    | p :: ps -> if Sys.file_exists p then p else find ps
+  in
+  find candidates
 
-let default_drifblim_path () = Target.resolve_tool "drifblim.rom"
+let default_drifblim_path () =
+  let exe_dir = Filename.dirname Sys.executable_name in
+  let shared = Filename.concat (Filename.concat (Filename.concat exe_dir "vendor") "shared") "drifblim.rom" in
+  if Sys.file_exists shared then shared
+  else Target.resolve_tool "drifblim.rom"
 
 (* Self-extracting bundle stub. OFFSET is the byte length of the stub
    itself (including the marker line); the tar.gz payload follows. *)
@@ -27,6 +44,14 @@ TMPD=$(mktemp -d "${TMPDIR:-/tmp}/etal-run.XXXXXX") || exit 1
 trap 'rm -rf "$TMPD"' EXIT INT TERM
 tail -c +$((OFFSET + 1)) "$SELF" | tar -xzf - -C "$TMPD" || exit 1
 chmod +x "$TMPD/uxn2"
+# Preflight: the vendored vm links SDL2 dynamically. Fail with install
+# help instead of a cryptic dynamic-linker error (`-v` only prints).
+if ! "$TMPD/uxn2" -v >/dev/null 2>&1; then
+  echo "etal bundle: the vendored uxn vm failed to start (SDL2 likely missing)." >&2
+  echo "Install it, e.g.: sudo apt install libsdl2-2.0-0  # Ubuntu/Debian" >&2
+  echo "  sudo pacman -S sdl2  # Arch | brew install sdl2  # macOS" >&2
+  exit 1
+fi
 # Run as a child (not exec) so the EXIT trap cleans up $TMPD.
 "$TMPD/uxn2" "$@" "$TMPD/game.rom"
 rc=$?
