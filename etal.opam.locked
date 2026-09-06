@@ -27,3 +27,4 @@ build: [
 ]
 homepage: "https://github.com/FireSouls25/uxn-dsl"
 bug-reports: "https://github.com/FireSouls25/uxn-dsl/issues"
+license: "MIT"

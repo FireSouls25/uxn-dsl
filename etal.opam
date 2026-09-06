@@ -9,6 +9,7 @@ uxn toolchain, and bundles single-file native executables or web pages.
 """
 maintainer: "uxn-dsl contributors"
 authors: "uxn-dsl contributors"
+license: "MIT"
 homepage: "https://github.com/FireSouls25/uxn-dsl"
 bug-reports: "https://github.com/FireSouls25/uxn-dsl/issues"
 tags: ["uxn" "uxntal" "dsl" "compiler"]
