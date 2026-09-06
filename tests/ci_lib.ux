@@ -1,0 +1,10 @@
+( shared bits for the committed CI fixture )
+ten :: 10;
+
+double :: fn(x: u16) -> u16 {
+    return x + x;
+}
+
+macro mod16(a: u16, b: u16) -> u16 {
+    return a - a / b * b;
+}

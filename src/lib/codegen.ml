@@ -264,8 +264,7 @@ let rec codegen_expr env expr =
           codegen_rhs env right 1;
           (match op with
            | Lshift -> emit env " #40 SFT SFT2"
-           | _ -> emit env " SFT2"
-           | _ -> ()))
+           | _ -> emit env " SFT2"))
      | _ ->
        emit_operand left;
        emit env " ";

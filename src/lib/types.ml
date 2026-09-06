@@ -99,14 +99,16 @@ let rec type_of_expr env expr =
     | Eq | Neq | Lt | Gt | Le | Ge ->
       TypBool
     | AndAnd | OrOr ->
-      TypBool)
+      TypBool
+    | Not ->
+      (* Unreachable: the parser only builds Not as UnOp. *)
+      failwith "Not is a unary operator")
   | UnOp (op, expr) ->
     let expr_typ = type_of_expr env expr in
     (match op with
     | Neg -> expr_typ
     | NotBit -> expr_typ
-    | Not -> TypBool
-    | _ -> expr_typ)
+    | Not -> TypBool)
   | Call (func_expr, args) ->
     (* Type check all arguments *)
     List.iter (fun arg -> ignore (type_of_expr env arg)) args;

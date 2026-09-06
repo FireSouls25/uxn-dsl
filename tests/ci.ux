@@ -1,0 +1,22 @@
+( committed CI fixture: exercises imports, macros, functions,
+  buffers, loops and print through `etal -t`; output is diffed
+  against ci_expected.tal by `dune runtest` )
+import "ci_lib.ux"
+
+buffer cells[8]: u16;
+
+main :: fn() {
+    m: u16 = mod16(17, 5);
+    d: u16 = double(ten);
+    cells[0] = 65;
+    cells[1] = 66;
+    total: u16 = m + d;
+    for i in 0..2 {
+        cells[i + 2] = 48 + i;
+    }
+    while total > 30 {
+        total = total - 1;
+    }
+    print("ci-ok\n");
+    varvara.console.write(48 + m);
+}

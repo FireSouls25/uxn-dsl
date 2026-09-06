@@ -13,17 +13,29 @@ module type S = sig
   val bundle : verbose:bool -> rom_path:string -> output_file:string -> unit
 end
 
+(* Candidate vendor/ directories for a running etal binary: next to
+   the exe, then walking up (covers bin/etal, _build/.../etal.exe,
+   and legacy src/etal layouts). *)
+let vendor_candidates () =
+  let exe_dir = Filename.dirname Sys.executable_name in
+  let up n =
+    let rec go acc d = if d = 0 then acc else go (Filename.concat acc "..") (d - 1) in
+    go exe_dir n
+  in
+  List.map (fun n -> Filename.concat (up n) "vendor") [0; 1; 2; 3]
+
 (* Resolve a vendored/dev tool path. Prefers the vendor/ directory next
    to the etal executable, falls back to the uxn2 checkout. *)
 let resolve_tool filename =
-  let exe_dir = Filename.dirname Sys.executable_name in
-  let candidates = [
-    Filename.concat (Filename.concat exe_dir "vendor") filename;
-    Filename.concat exe_dir filename;
-    Filename.concat (Filename.concat exe_dir "../uxn2/bin") filename;
-    Filename.concat "uxn2/bin" filename;
-    Filename.concat (Filename.dirname exe_dir) (Filename.concat "uxn2/bin" filename);
-  ] in
+  let candidates =
+    List.map (fun v -> Filename.concat v filename) (vendor_candidates ())
+    @ [
+      Filename.concat (Filename.dirname Sys.executable_name) filename;
+      Filename.concat (Filename.concat (Filename.dirname Sys.executable_name) "../uxn2/bin") filename;
+      Filename.concat "uxn2/bin" filename;
+      Filename.concat (Filename.concat "vendor" "shared") filename;
+    ]
+  in
   let rec find = function
     | [] -> Filename.concat "uxn2/bin" filename
     | p :: ps -> if Sys.file_exists p then p else find ps
@@ -33,15 +45,12 @@ let resolve_tool filename =
 (* Resolve a vendored directory (e.g. uxn5). Prefers vendor/ next to
    the etal executable, falls back to the checkout layout. *)
 let resolve_vendor_dir dirname =
-  let exe_dir = Filename.dirname Sys.executable_name in
-  let candidates = [
-    Filename.concat (Filename.concat exe_dir "vendor") dirname;
-    Filename.concat exe_dir dirname;
-    Filename.concat (Filename.concat exe_dir "../vendor") dirname;
-    Filename.concat "src/vendor" dirname;
-  ] in
+  let candidates =
+    List.map (fun v -> Filename.concat v dirname) (vendor_candidates ())
+    @ [Filename.concat "vendor" dirname]
+  in
   let rec find = function
-    | [] -> Filename.concat "src/vendor" dirname
+    | [] -> Filename.concat "vendor" dirname
     | p :: ps -> if Sys.file_exists p && Sys.is_directory p then p else find ps
   in
   find candidates

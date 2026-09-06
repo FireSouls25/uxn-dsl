@@ -10,7 +10,7 @@
 # Exit nonzero with a message on the first violation.
 set -e
 
-BIN="${1:-src/vendor/linux-x86_64/uxn2}"
+BIN="${1:-vendor/linux-x86_64/uxn2}"
 [ -x "$BIN" ] || { echo "FAIL: not executable: $BIN" >&2; exit 1; }
 
 fail() { echo "FAIL: $1" >&2; exit 1; }

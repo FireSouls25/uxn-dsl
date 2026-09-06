@@ -1,3 +1,5 @@
 (library
  (name etal_lib)
-  (modules ast token lexer parser types expand loader target target_native target_web codegen))
+ (package etal)
+ (wrapped false)
+ (modules ast token lexer parser types expand loader target target_native target_web codegen))

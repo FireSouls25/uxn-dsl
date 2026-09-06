@@ -1,7 +1,0 @@
-(lang dune 3.0)
-
-(name etal)
-
-(executable
- (name etal)
- (public_name etal))

@@ -1,0 +1,6 @@
+; Dev-scratch probes: build-only (they print token streams, assert
+; nothing). Behavioural gates live in CI shell steps (golden .tal
+; diff, byte-exact ROM runs, portability gate).
+(executables
+ (names test_lexer test_parse test_parse2 test_parse3 test_str test_str2)
+ (libraries etal_lib))

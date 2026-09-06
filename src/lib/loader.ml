@@ -80,7 +80,7 @@ let load_program entry =
           let target = normalize
             (if Filename.is_relative p then Filename.concat base p else p) in
           load target path (path :: visited)
-        | AssetDecl a as d ->
+        | AssetDecl a ->
           (* Resolve asset paths against the file declaring them,
              so codegen (which runs after splicing) needs no context. *)
           let fixed =

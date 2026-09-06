@@ -1,3 +1,5 @@
 (executable
  (name etal)
+ (package etal)
+ (public_name etal)
  (libraries etal_lib))

@@ -1,0 +1,60 @@
+|00
+    @double__x $2
+    @main__m $2
+    @main__d $2
+    @main__total $2
+    @main__i $2
+
+%RTN { JMP2r }
+%EMIT { #18 DEO }
+%HALT { #010f DEO }
+%\0 { 00 }
+%\s { 20 }
+%\n { 0a }
+
+|10 @Console/vector $2 &read $1 &pad $4 &type $1 &write $1 &error $1
+
+|000a @ten
+
+|0100
+;main JSR2
+HALT
+BRK
+
+
+
+@double ( -- )
+    .double__x STZ2
+.double__x LDZ2 .double__x LDZ2 ADD2 JMP2r
+JMP2r
+
+@main ( -- )
+#0011 #0011 #0005 DIV2 #0005 MUL2 SUB2 .main__m STZ2
+;ten ;double JSR2 .main__d STZ2
+#0041 ;cells #0000 #0002 MUL2 ADD2 STA2
+#0042 ;cells #0001 #0002 MUL2 ADD2 STA2
+.main__m LDZ2 .main__d LDZ2 ADD2 .main__total STZ2
+#0000 .main__i STZ2
+&for_1
+.main__i LDZ2 #0002 LTH2 ?&for_cont_2
+ !&for_end_3
+&for_cont_2
+#0030 .main__i LDZ2 ADD2 ;cells .main__i LDZ2 #0002 ADD2 #0002 MUL2 ADD2 STA2
+.main__i LDZ2 INC2 .main__i STZ2
+ !&for_1
+&for_end_3
+&while_4
+.main__total LDZ2 #001e GTH2 ?&while_cont_5
+ !&while_end_6
+&while_cont_5
+.main__total LDZ2 #0001 SUB2 .main__total STZ2
+ !&while_4
+&while_end_6
+;str_0 &print_7 LDAk .Console/write DEO INC2 LDAk ?&print_7 POP2
+#0030 .main__m LDZ2 ADD2 NIP .Console/write DEO
+JMP2r
+
+
+|2000 @cells $16
+
+@str_0 "c "i "- "o "k \n \0

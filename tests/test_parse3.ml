@@ -3,7 +3,8 @@ open Lexer
 open Parser
 
 let () =
-  let ic = open_in "../examples/hello.ux" in
+  (* Fixture lives next to this test; dune runs tests with cwd=tests/. *)
+  let ic = open_in "ci.ux" in
   let source = really_input_string ic (in_channel_length ic) in
   close_in ic;
   Printf.printf "Source:\n%s\n---\n" source;

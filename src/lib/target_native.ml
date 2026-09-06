@@ -14,11 +14,12 @@ let name = "native"
    plug in here without touching the driver (see vendor/BUILD.md).
    Lookup keeps legacy fallbacks so older checkouts keep working. *)
 let default_uxn2_path () =
-  let exe_dir = Filename.dirname Sys.executable_name in
-  let candidates = [
-    Filename.concat (Filename.concat (Filename.concat exe_dir "vendor") "linux-x86_64") "uxn2";
-    Target.resolve_tool "uxn2";
-  ] in
+  let candidates =
+    List.map
+      (fun v -> Filename.concat (Filename.concat v "linux-x86_64") "uxn2")
+      (Target.vendor_candidates ())
+    @ [Target.resolve_tool "uxn2"]
+  in
   let rec find = function
     | [] -> Target.resolve_tool "uxn2"
     | p :: ps -> if Sys.file_exists p then p else find ps
@@ -26,10 +27,17 @@ let default_uxn2_path () =
   find candidates
 
 let default_drifblim_path () =
-  let exe_dir = Filename.dirname Sys.executable_name in
-  let shared = Filename.concat (Filename.concat (Filename.concat exe_dir "vendor") "shared") "drifblim.rom" in
-  if Sys.file_exists shared then shared
-  else Target.resolve_tool "drifblim.rom"
+  let candidates =
+    List.map
+      (fun v -> Filename.concat (Filename.concat v "shared") "drifblim.rom")
+      (Target.vendor_candidates ())
+    @ [Target.resolve_tool "drifblim.rom"]
+  in
+  let rec find = function
+    | [] -> Target.resolve_tool "drifblim.rom"
+    | p :: ps -> if Sys.file_exists p then p else find ps
+  in
+  find candidates
 
 (* Self-extracting bundle stub. OFFSET is the byte length of the stub
    itself (including the marker line); the tar.gz payload follows. *)

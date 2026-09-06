@@ -111,7 +111,6 @@ let skip_comment lexer =
       true
     end
   | _ -> false
-  | _ -> false
 
 let skip_whitespace_and_comments lexer =
   let rec loop () =

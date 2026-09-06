@@ -1,0 +1,4 @@
+#!/bin/sh
+# etal dev forwarder: runs the dune-built compiler.
+# Build first: dune build. (On Windows use _build/default/src/bin/etal.exe directly.)
+exec "$(dirname "$0")/../_build/default/src/bin/etal.exe" "$@"

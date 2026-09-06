@@ -1,0 +1,23 @@
+opam-version: "2.0"
+name: "etal"
+version: "0.1.0"
+synopsis: "ETAL: a small typed DSL compiling to Uxntal for the Uxn VM"
+description: """
+ETAL is a typed language with functions, events, devices and sprites
+that compiles to Uxntal (.tal), assembles to ROMs via the vendored
+uxn toolchain, and bundles single-file native executables or web pages.
+"""
+maintainer: "uxn-dsl contributors"
+authors: "uxn-dsl contributors"
+homepage: "https://github.com/FireSouls25/uxn-dsl"
+bug-reports: "https://github.com/FireSouls25/uxn-dsl/issues"
+tags: ["uxn" "uxntal" "dsl" "compiler"]
+depends: [
+  "ocaml" {>= "5.0"}
+  "dune" {>= "3.24" & < "3.25"}
+]
+build: [
+  ["dune" "subst"] {dev}
+  ["dune" "build" "-p" name "-j" jobs]
+  ["dune" "runtest" "-p" name "-j" jobs] {with-test}
+]
