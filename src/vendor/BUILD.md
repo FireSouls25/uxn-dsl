@@ -1,7 +1,16 @@
 # Vendored VMs — provenance & per-platform build instructions
 
 The `.rom` is portable; only the VM half of a bundle varies per
-platform. Layout:
+platform. Portability contract for `linux-x86_64/uxn2`, enforced by
+`src/tests/portability.sh`:
+
+- glibc floor <= 2.17 (`readelf -V` max requirement),
+- `NEEDED` limited to SDL2/libc/ld-linux/pthread (+libm/libdl),
+- no direct dynamic refs to X11/ALSA families (those resolve
+  transitively via the target machine's own SDL2),
+- `-v` smoke test passes.
+
+Layout:
 
 ```
 src/vendor/
@@ -44,7 +53,7 @@ dirs; native builds need nothing, release cross-builds pass
 theirs — e.g. Debian needs `/usr/lib/x86_64-linux-gnu`).
 `zig build -h` lists everything including per-target notes.
 
-SDL2ials dynamic rationale: upstream's documented prerequisite on
+SDL2 is a dynamic rationale: upstream's documented prerequisite on
 every OS; distro-patched security; SDL2 2.x API stability. System
 backend libs (X11/ALSA/...) stay dynamic too. Fully-static builds
 were tried and dropped: no static SDL2/X11/ALSA archives ship on
@@ -59,6 +68,35 @@ stock distros, and static audio backends break runtime dlopen.
   (~2014+ distros). `ldd` shows dynamic SDL2 + libc/X11/ALSA.
 - The bundle stub preflights (`uxn2 -v`) and prints SDL2 install
   help when the library is absent.
+
+## Old-distro execution proof (done 2026-09-06, re-runnable)
+
+Beyond the static gate (`src/tests/portability.sh`), the binary was
+executed inside Ubuntu 18.04 userspace (glibc 2.27, SDL 2.0.5 from
+Debian stretch):
+
+- negative control: the previous gcc build (floor 2.34) fails with
+  ``version `GLIBC_2.34' not found`` — the environment discriminates;
+- positive: the vendored binary boots and runs the console gate ROM
+  byte-identically (`Hi!\nBye.\n828`), under `SDL_VIDEODRIVER=dummy`.
+
+Recipe (all artifacts in `/tmp`, nothing committed):
+
+```
+# 1. Rootfs (checksum against published SHA256SUMS):
+curl -O http://cdimage.ubuntu.com/ubuntu-base/releases/18.04/release/ubuntu-base-18.04.5-base-amd64.tar.gz
+mkdir /tmp/u1804 && tar -xzf ubuntu-base-18.04.5-base-amd64.tar.gz -C /tmp/u1804
+# 2. Stretch SDL2 2.0.5 + dependency closure from archive.debian.org
+#    (libsdl2, X11 set, ALSA/pulse/sndio, wayland, xkbcommon, …):
+#    resolve soname->package via stretch Packages, extract .debs to /tmp/u1804
+# 3. Stage the VM + a test ROM in /tmp/oldtest, then:
+bwrap --unshare-user --uid 0 --gid 0 \
+  --bind /tmp/u1804 / --bind /tmp/oldtest /test \
+  --dev /dev --proc /proc \
+  --setenv PATH /usr/bin:/bin --setenv HOME /test \
+  --setenv SDL_VIDEODRIVER dummy \
+  /test/uxn2-new /test/gate.rom | od -An -tx1   # expect gate bytes
+```
 
 ## macOS (TODO — needs a Mac; you volunteered one)
 
