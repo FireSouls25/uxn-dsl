@@ -1,9 +1,11 @@
 # CI: build + test the etal compiler on all supported platforms.
 #
 # Notes:
-# - etal.opam.locked pins exact Linux versions; macOS/Windows install
-#   the same ranges from etal.opam (ocaml >= 5.0, dune 3.24.x) because
-#   the lockfile records ocaml-system (Linux-only).
+# - etal.opam.locked pins exact versions for LOCAL use; CI resolves
+#   fresh ranges from etal.opam on every OS (per setup-ocaml's own
+#   recommendation), because the lockfile records ocaml-system, which
+#   exists on no GitHub runner (locked installs fail with an
+#   unsatisfiable ocaml-system constraint).
 # - Behavioural gates need no VM: `etal -t` stops before assembly, so
 #   the golden .tal diff proves host-independent codegen everywhere.
 # - VM-dependent gates (ROM runs, portability.sh) stay local: uxn2/
@@ -19,6 +21,10 @@
 #   comes from setup-ocaml, dune from opam), so depext is skipped and
 #   sandboxing disabled with it (bubblewrap came from the same set).
 #   macOS keeps depext (brew path works there).
+# - dune-cache is on: content-addressed, so it can only restore
+#   identical artifacts. The compiler switch itself is cached by the
+#   action; project deps intentionally re-resolve every run (see above),
+#   so only the dune build cache persists across runs.
 # - Every `run:` below uses bash (also present on the windows runner
 #   via Git for Windows).
 
@@ -64,13 +70,9 @@ jobs:
           ocaml-compiler: ${{ matrix.ocaml }}
           opam-depext: ${{ matrix.depext }}
           opam-disable-sandboxing: ${{ matrix.nosandbox }}
+          dune-cache: true
 
-      - name: Install locked dependencies (linux)
-        if: matrix.name == 'linux'
-        run: opam install --locked --deps-only -y .
-
-      - name: Install dependencies (macOS, Windows)
-        if: matrix.name != 'linux'
+      - name: Install dependencies
         run: opam install --deps-only -y .
 
       - name: Build
