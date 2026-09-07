@@ -9,8 +9,9 @@
 # - Behavioural gates need no VM: `etal -t` stops before assembly, so
 #   the golden .tal diff proves host-independent codegen everywhere.
 # - VM-dependent gates (ROM runs, portability.sh) stay local: uxn2/
-#   is a separate checkout and the portability gate is ELF-specific.
-#   The linux job additionally runs portability.sh against vendor/.
+#   is a separate checkout, the portability gate is ELF-specific, and
+#   stock runners lack SDL2 (the vendored VM can't even boot there;
+#   use tests/portability.sh on a dev machine instead).
 # - Windows uses OCaml "5.3" (range): plain 5.5.0/5.3.0 have no Windows
 #   base-compiler package in opam-repository, while >= 5.3 is supported
 #   on all OSes per the setup-ocaml matrix. Quoted: YAML parses
@@ -85,7 +86,3 @@ jobs:
         run: |
           opam exec -- dune exec -- etal -t tests/ci.ux -o /tmp/ci.actual.tal
           diff tests/ci_expected.tal /tmp/ci.actual.tal && echo GOLDEN-OK
-
-      - name: Portability gate (Linux VM contract)
-        if: matrix.name == 'linux'
-        run: sh tests/portability.sh

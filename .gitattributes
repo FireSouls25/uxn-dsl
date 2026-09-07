@@ -1,0 +1,7 @@
+# Normalize line endings: compiler inputs/outputs must be byte-stable
+# across platforms (notably the golden tests/ci_expected.tal diff).
+* text=auto eol=lf
+*.rom binary
+*.chr binary
+*.icn binary
+*.rom.sym binary

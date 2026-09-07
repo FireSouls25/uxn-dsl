@@ -45,7 +45,8 @@ let base64_encode s =
   Buffer.contents buf
 
 let read_text path =
-  let ic = open_in path in
+  (* Binary mode: same CRLF rationale as Loader.read_source. *)
+  let ic = open_in_bin path in
   let n = in_channel_length ic in
   let s = really_input_string ic n in
   close_in ic;

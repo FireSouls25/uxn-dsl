@@ -101,7 +101,10 @@ let absolutize path =
 
 let read_source path importer =
   try
-    let ic = open_in path in
+    (* Binary mode: on Windows, text mode would CRLF-translate and
+       break the length-prefixed read below. The lexer treats \r as
+       whitespace, so CRLF sources lex identically. *)
+    let ic = open_in_bin path in
     let n = in_channel_length ic in
     let s = really_input_string ic n in
     close_in ic;

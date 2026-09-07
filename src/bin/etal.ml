@@ -62,7 +62,7 @@ let () =
   let program = Expand.expand_program program in
   if !verbose then begin
     eprintf "Expanded to %d declarations\n" (List.length program);
-    let ic = open_in input_file in
+    let ic = open_in_bin input_file in
     let source = really_input_string ic (in_channel_length ic) in
     close_in ic;
     eprintf "Top-level file tokenized to %d tokens\n"
