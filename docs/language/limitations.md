@@ -56,6 +56,14 @@ not are marked **footgun**.
 - **`brk` ends the vector, not the function.** It belongs in `event`
   handlers only — a `BRK` on a plain `fn` path (including `main ::
   fn()`) returns to the emulator early.
+- **Multi-port device writes are order-sensitive.** A sprite blit
+  reads `addr`/`x`/`y`/`auto` at the moment `sprite` is written, so
+  reordering those assignments draws wrong — the compiler does not
+  check this. Keep each blit in one reviewed macro or function.
+- **Bare `return;` in an `event` emits `JMP2r`, not `BRK`.**
+  Vectors are never `JSR`-called, so that pops a bogus return
+  address — use `brk;` for early exits until `return;` is taught
+  the difference (see [proposals](proposals.md)).
 
 ## Surface gaps
 

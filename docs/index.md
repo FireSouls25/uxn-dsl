@@ -59,6 +59,9 @@ handful of `%`-macros and the entry vector — what you write is what runs.
   - [Uxn mapping](language/uxn-mapping.md) — how it all becomes stack code
   - [Limitations](language/limitations.md) — honest list of what ETAL
     cannot do (yet), and why
+  - [Proposals](language/proposals.md) — assessed improvements (modular
+    types, `match`, structs, rings, inference…) and unserved Varvara
+    territory
 - [Toolchain](toolchain/) — building the compiler and the VM, CLI modes,
   vendor layout, testing strategy, versioning
 - [Examples](examples/) — annotated walkthrough of the Snake game
