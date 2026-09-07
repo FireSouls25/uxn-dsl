@@ -83,6 +83,9 @@ jobs:
         run: opam exec -- dune runtest
 
       - name: Golden .tal diff (host-independent codegen)
+        # NOTE: output must be repo-relative, not /tmp/.... The etal
+        # binary is native per-OS: on Windows /tmp/ means C:\tmp, which
+        # does not exist (Sys_error creating it). Repo root always exists.
         run: |
-          opam exec -- dune exec -- etal -t tests/ci.ux -o /tmp/ci.actual.tal
-          diff tests/ci_expected.tal /tmp/ci.actual.tal && echo GOLDEN-OK
+          opam exec -- dune exec -- etal -t tests/ci.ux -o ci.actual.tal
+          diff tests/ci_expected.tal ci.actual.tal && echo GOLDEN-OK
