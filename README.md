@@ -140,8 +140,11 @@ DSL can't yet say can be embedded with `raw { }`.
 - `dune runtest` — lexer/parser probes plus a **golden `.tal` diff** on committed
   fixtures (`tests/ci.ux`): byte-identical output on every platform or red CI.
 - Game/harness ROMs are `diff`-gated byte-for-byte (see `examples/snake/`).
+- `sh tests/smoke.sh` — local-only assembler smoke: `-r` from outside the repo
+  (proves exe-relative `vendor/` resolution), deterministic ROM bytes, web target.
 - `sh tests/portability.sh` — the Linux VM contract (glibc floor, dependency
-  closure, smoke boot). GitHub Actions runs all of the above on Linux, macOS
+  closure, smoke boot). The two `sh` scripts above are local-only (stock
+  runners lack SDL2); GitHub Actions runs the compiler gates on Linux, macOS
   and Windows (`.github/workflows/etal-ci.yml`).
 
 ## Documentation

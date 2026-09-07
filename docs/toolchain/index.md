@@ -88,6 +88,8 @@ zig build -Dtarget=aarch64-macos -Dsdl-prefix=/opt/homebrew      # macOS (needs 
   host-independence gate and needs no VM.
 - Fixture ROMs under `examples/` are `diff`-gated byte-for-byte
   against real emulator runs (console bytes compared exactly).
+- `sh tests/smoke.sh` — local-only assembler smoke: `-r` from outside the
+  repo (exe-relative `vendor/` resolution), deterministic ROM bytes, web target.
 - `sh tests/portability.sh` — the Linux VM contract: glibc floor,
   dependency closure, no direct X11/ALSA references, smoke boot.
 - GitHub Actions (`.github/workflows/etal-ci.yml`) runs build, probes and

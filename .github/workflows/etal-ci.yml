@@ -9,10 +9,11 @@
 #   unsatisfiable ocaml-system constraint).
 # - Behavioural gates need no VM: `etal -t` stops before assembly, so
 #   the golden .tal diff proves host-independent codegen everywhere.
-# - VM-dependent gates (ROM runs, portability.sh) stay local: uxn2/
-#   is a separate checkout, the portability gate is ELF-specific, and
-#   stock runners lack SDL2 (the vendored VM can't even boot there;
-#   use tests/portability.sh on a dev machine instead).
+# - VM-dependent gates (ROM assembly via tests/smoke.sh, ROM runs,
+#   portability.sh) stay local: uxn2/ is a separate checkout, the
+#   portability gate is ELF-specific, and stock runners lack SDL2 (the
+#   vendored VM can't even boot there; run tests/smoke.sh and
+#   tests/portability.sh on a dev machine instead).
 # - Windows uses OCaml "5.3" (range): plain 5.5.0/5.3.0 have no Windows
 #   base-compiler package in opam-repository, while >= 5.3 is supported
 #   on all OSes per the setup-ocaml matrix. Quoted: YAML parses
@@ -106,20 +107,6 @@ jobs:
           name: actual-tal-${{ matrix.name }}
           path: ci.actual.tal
 
-      - name: Smoke-test etal assembler (linux only)
-        # Runs -r from OUTSIDE the repo so only exe-relative vendor/
-        # resolution can save it (no CWD fallback); catches the bug class
-        # where uxn2/drifblim aren't found next to the binary. Gated to
-        # linux: it is the only OS with a vendor/ VM row today.
-        if: matrix.name == 'linux'
-        run: |
-          smokedir=$(mktemp -d)
-          cp tests/ci.ux tests/ci_lib.ux "$smokedir/"
-          opam exec -- dune exec -- etal -r "$smokedir/ci.ux" -o "$smokedir/a.rom"
-          opam exec -- dune exec -- etal -r "$smokedir/ci.ux" -o "$smokedir/b.rom"
-          test -s "$smokedir/a.rom"
-          cmp "$smokedir/a.rom" "$smokedir/b.rom" && echo SMOKE-OK
-
   release:
     # Compiler-only releases (no games): each artifact is the etal
     # binary plus the vendor/ tree (VMs, assembler, web emulator), so
@@ -161,18 +148,6 @@ jobs:
           ls pkg/etal 2>/dev/null || ls pkg/etal.exe 2>/dev/null || { echo "compiler artifact missing in pkg/:"; ls -R pkg; exit 1; }
           cp -r vendor pkg/vendor
           ls -R pkg | head -n 12
-
-      - name: Smoke-test staged package (linux only)
-        # Proves the shipped compiler+vendor pairing actually assembles
-        # before it gets packed into the archive. No toolchain here:
-        # uses the staged ./pkg/etal binary directly, from outside the
-        # repo so only exe-relative vendor/ resolution applies.
-        if: matrix.name == 'linux'
-        run: |
-          smokedir=$(mktemp -d)
-          cp tests/ci.ux tests/ci_lib.ux "$smokedir/"
-          ./pkg/etal -r "$smokedir/ci.ux" -o "$smokedir/pkg.rom"
-          test -s "$smokedir/pkg.rom" && echo PKG-SMOKE-OK
 
       - name: Pack unix release archive
         # NOTE: extensionless on unix (`etal`), `.exe` on Windows —
