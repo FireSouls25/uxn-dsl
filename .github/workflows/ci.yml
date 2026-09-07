@@ -88,4 +88,12 @@ jobs:
         # does not exist (Sys_error creating it). Repo root always exists.
         run: |
           opam exec -- dune exec -- etal -t tests/ci.ux -o ci.actual.tal
-          diff tests/ci_expected.tal ci.actual.tal && echo GOLDEN-OK
+          echo "expected lines: $(wc -l < tests/ci_expected.tal) / actual lines: $(wc -l < ci.actual.tal)"
+          diff -u tests/ci_expected.tal ci.actual.tal && echo GOLDEN-OK
+
+      - name: Upload actual output on golden failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: actual-tal-${{ matrix.name }}
+          path: ci.actual.tal

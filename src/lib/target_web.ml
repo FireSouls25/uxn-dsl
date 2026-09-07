@@ -120,7 +120,9 @@ let bundle ~verbose ~vendor_dir ~rom_path ~output_file =
     ~title:(Printf.sprintf "%s - etal" (Filename.basename output_file))
     ~game_name:(Filename.basename output_file)
     ~rom_bytes ~vendor_dir in
-  let oc = open_out output_file in
+  (* Binary mode: same CRLF rationale (Windows line translation
+     would corrupt the embedded base64 ROM). *)
+  let oc = open_out_bin output_file in
   output_string oc html;
   close_out oc;
   if verbose then Printf.eprintf "Wrote web bundle to %s\n" output_file

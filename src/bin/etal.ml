@@ -82,7 +82,9 @@ let () =
   (* Write output *)
   (match mode with
   | `Tal ->
-    let oc = open_out output_file in
+    (* Binary mode: text mode would CRLF-translate on Windows and the
+       golden .tal diff could never match. *)
+    let oc = open_out_bin output_file in
     output_string oc tal_code;
     close_out oc;
     if !verbose then eprintf "Wrote Uxntal to %s\n" output_file
@@ -90,7 +92,7 @@ let () =
     (* Write temporary .tal file in same dir as input for relative includes *)
     let input_dir = Filename.dirname input_file in
     let temp_tal = Filename.temp_file ~temp_dir:input_dir "etal" ".tal" in
-    let oc = open_out temp_tal in
+    let oc = open_out_bin temp_tal in
     output_string oc tal_code;
     close_out oc;
 
