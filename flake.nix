@@ -44,9 +44,18 @@
         };
         scope = on.buildOpamProject' { repos = [ opam-repository ]; } ./. query;
         overlay = final: prev: {
-          ${package} = prev.${package}.overrideAttrs (_: {
+          ${package} = prev.${package}.overrideAttrs (oa: {
             # Prevent the ocaml dependencies from leaking into dependent environments
             doNixSupport = false;
+            # Ship the vendor/ tree (uxn2 VM, drifblim assembler ROM, uxn5 web
+            # emulator) inside the closure: etal resolves tools exe-relative
+            # ($out/bin/etal -> $out/vendor), so -r/bundle/web work from any
+            # CWD with no PATH or checkout dependency. Same layout as the
+            # release archives (compiler + vendor tree).
+            postInstall = (oa.postInstall or "") + ''
+              cp -r "${oa.src}/vendor" "$out/vendor"
+              chmod +x "$out/vendor/linux-x86_64/uxn2"
+            '';
           });
         };
         scope' = scope.overrideScope overlay;
