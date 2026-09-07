@@ -62,6 +62,8 @@ handful of `%`-macros and the entry vector — what you write is what runs.
 - [Toolchain](toolchain/) — building the compiler and the VM, CLI modes,
   vendor layout, testing strategy, versioning
 - [Examples](examples/) — annotated walkthrough of the Snake game
+- [API index](api/) — every builtin, device, function, event, macro
+  and dataset in the language and corpus, grepable by declaration
 - [Changelog](CHANGELOG.md) — version history and the `0.x.y` convention
 - [RAG corpus sources](sources.md) — upstream references this documentation
   is checked against (Uxntal reference, opcodes, Varvara spec, tutorials)
