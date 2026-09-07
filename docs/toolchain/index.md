@@ -90,7 +90,7 @@ zig build -Dtarget=aarch64-macos -Dsdl-prefix=/opt/homebrew      # macOS (needs 
   against real emulator runs (console bytes compared exactly).
 - `sh tests/portability.sh` — the Linux VM contract: glibc floor,
   dependency closure, no direct X11/ALSA references, smoke boot.
-- GitHub Actions (`.github/workflows/ci.yml`) runs build, probes and
+- GitHub Actions (`.github/workflows/etal-ci.yml`) runs build, probes and
   the golden diff on Linux, macOS and Windows; VM-dependent gates
   stay local. Releases are cut from git tags and ship the compiler
   plus the `vendor/` tree per OS.

@@ -142,7 +142,7 @@ DSL can't yet say can be embedded with `raw { }`.
 - Game/harness ROMs are `diff`-gated byte-for-byte (see `examples/snake/`).
 - `sh tests/portability.sh` — the Linux VM contract (glibc floor, dependency
   closure, smoke boot). GitHub Actions runs all of the above on Linux, macOS
-  and Windows (`.github/workflows/ci.yml`).
+  and Windows (`.github/workflows/etal-ci.yml`).
 
 ## Documentation
 

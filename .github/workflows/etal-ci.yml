@@ -1,4 +1,5 @@
-# CI: build + test the etal compiler on all supported platforms.
+# etal-ci: build + test the etal compiler on all supported platforms, then
+# package tag releases.
 #
 # Notes:
 # - etal.opam.locked pins exact versions for LOCAL use; CI resolves
@@ -26,7 +27,7 @@
 # - Every `run:` below uses bash (also present on the windows runner
 #   via Git for Windows).
 
-name: ci
+name: etal-ci
 
 on:
   push:
@@ -37,8 +38,8 @@ defaults:
     shell: bash
 
 jobs:
-  etal:
-    name: etal (${{ matrix.name }})
+  build-test:
+    name: build-test etal (${{ matrix.name }})
     strategy:
       fail-fast: false
       matrix:
@@ -59,19 +60,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up OCaml
+      - name: Set up OCaml toolchain
         uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: ${{ matrix.ocaml }}
           opam-disable-sandboxing: ${{ matrix.nosandbox }}
 
-      - name: Install dependencies
+      - name: Install etal opam dependencies
         run: opam install --deps-only -y .
 
-      - name: Build
+      - name: Build etal compiler
         run: opam exec -- dune build @all
 
-      - name: Unit probes
+      - name: Run etal unit probes
         run: opam exec -- dune runtest
 
       - name: Golden .tal diff (host-independent codegen)
@@ -83,8 +84,8 @@ jobs:
           echo "expected lines: $(wc -l < tests/ci_expected.tal) / actual lines: $(wc -l < ci.actual.tal)"
           diff -u tests/ci_expected.tal ci.actual.tal && echo GOLDEN-OK
 
-      - name: Upload compiler artifact (tags only)
-        # The release job consumes this instead of rebuilding: same
+      - name: Upload validated etal binary (tags only)
+        # The package-release job consumes this instead of rebuilding: same
         # bytes CI validated, no second toolchain provisioning.
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v5
@@ -98,7 +99,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Upload actual output on golden failure
+      - name: Upload actual .tal on golden failure
         if: failure()
         uses: actions/upload-artifact@v5
         with:
@@ -111,10 +112,10 @@ jobs:
     # -r/bundle/web work out of the box wherever that OS's VM row
     # exists (today: linux; macOS/Windows light up when their VM
     # binaries land in vendor/).
-    # No toolchain here: the binary comes from the etal job's artifact
+    # No toolchain here: the binary comes from the build-test job's artifact
     # (same bytes CI validated), so release needs no OCaml/opam/dune.
-    name: release (${{ matrix.asset }})
-    needs: [etal]
+    name: package-release etal (${{ matrix.asset }})
+    needs: [build-test]
     if: startsWith(github.ref, 'refs/tags/v')
     strategy:
       fail-fast: false
@@ -135,29 +136,29 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Download compiler artifact
+      - name: Download validated etal binary
         uses: actions/download-artifact@v5
         with:
           name: etal-${{ matrix.name }}
           path: pkg
 
-      - name: Stage package (compiler + vendor tree)
+      - name: Stage release package (compiler + vendor tree)
         run: |
           ls pkg/etal 2>/dev/null || ls pkg/etal.exe 2>/dev/null || { echo "compiler artifact missing in pkg/:"; ls -R pkg; exit 1; }
           cp -r vendor pkg/vendor
           ls -R pkg | head -n 12
 
-      - name: Pack archive (unix)
+      - name: Pack unix release archive
         # NOTE: extensionless on unix (`etal`), `.exe` on Windows —
         # each platform's conventional executable name.
         if: matrix.name != 'windows'
         run: tar -czf ${{ matrix.asset }} -C pkg etal vendor
 
-      - name: Pack archive (windows)
+      - name: Pack windows release archive
         if: matrix.name == 'windows'
         run: powershell.exe -NoProfile -Command "Compress-Archive -Path pkg\\etal.exe,pkg\\vendor -DestinationPath ${{ matrix.asset }}"
 
-      - name: Publish release
+      - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.asset }}
