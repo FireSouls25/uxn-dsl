@@ -83,6 +83,17 @@ jobs:
           echo "expected lines: $(wc -l < tests/ci_expected.tal) / actual lines: $(wc -l < ci.actual.tal)"
           diff -u tests/ci_expected.tal ci.actual.tal && echo GOLDEN-OK
 
+      - name: Upload compiler artifact (tags only)
+        # The release job consumes this instead of rebuilding: same
+        # bytes CI validated, no second toolchain provisioning.
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v5
+        with:
+          name: etal-${{ matrix.name }}
+          path: _build/default/src/bin/etal.exe
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload actual output on golden failure
         if: failure()
         uses: actions/upload-artifact@v5
@@ -96,6 +107,8 @@ jobs:
     # -r/bundle/web work out of the box wherever that OS's VM row
     # exists (today: linux; macOS/Windows light up when their VM
     # binaries land in vendor/).
+    # No toolchain here: the binary comes from the etal job's artifact
+    # (same bytes CI validated), so release needs no OCaml/opam/dune.
     name: release (${{ matrix.asset }})
     needs: [etal]
     if: startsWith(github.ref, 'refs/tags/v')
@@ -105,18 +118,12 @@ jobs:
         include:
           - name: linux
             os: ubuntu-latest
-            ocaml: "5.5.0"
-            nosandbox: true
             asset: etal-linux-x86_64.tar.gz
           - name: macos
             os: macos-latest
-            ocaml: "5.5.0"
-            nosandbox: false
             asset: etal-macos-arm64.tar.gz
           - name: windows
             os: windows-latest
-            ocaml: "5.3"
-            nosandbox: false
             asset: etal-windows-x86_64.zip
     runs-on: ${{ matrix.os }}
     permissions:
@@ -124,23 +131,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up OCaml
-        uses: ocaml/setup-ocaml@v3
+      - name: Download compiler artifact
+        uses: actions/download-artifact@v5
         with:
-          ocaml-compiler: ${{ matrix.ocaml }}
-          opam-disable-sandboxing: ${{ matrix.nosandbox }}
-
-      - name: Install dependencies
-        run: opam install --deps-only -y .
-
-      - name: Build
-        run: opam exec -- dune build @all
+          name: etal-${{ matrix.name }}
+          path: pkg
 
       - name: Stage package (compiler + vendor tree)
         run: |
-          rm -rf pkg && mkdir pkg
-          cp _build/default/src/bin/etal.exe pkg/etal.exe
+          test -f pkg/etal.exe || { echo "compiler artifact missing in pkg/:"; ls -R pkg; exit 1; }
           cp -r vendor pkg/vendor
+          ls -R pkg | head -n 12
 
       - name: Pack archive (unix)
         # NOTE: the binary keeps dune's uniform `etal.exe` name on all
