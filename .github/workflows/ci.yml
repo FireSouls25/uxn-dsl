@@ -16,16 +16,13 @@
 #   base-compiler package in opam-repository, while >= 5.3 is supported
 #   on all OSes per the setup-ocaml matrix. Quoted: YAML parses
 #   unquoted 5.10 as float 5.1 (action README warning).
-# - Linux sets opam-depext: false: opam's default depext set includes
-#   darcs, which no longer exists on Ubuntu noble, failing the whole
-#   apt install. We need nothing from apt (pure OCaml: the compiler
-#   comes from setup-ocaml, dune from opam), so depext is skipped and
-#   sandboxing disabled with it (bubblewrap came from the same set).
-#   macOS keeps depext (brew path works there).
-# - dune-cache is on: content-addressed, so it can only restore
-#   identical artifacts. The compiler switch itself is cached by the
-#   action; project deps intentionally re-resolve every run (see above),
-#   so only the dune build cache persists across runs.
+# - Linux disables sandboxing (bubblewrap isn't guaranteed on runners);
+#   pure-OCaml builds need nothing systemic anywhere. (An older failure
+#   blamed on darcs vanished with the setup-ocaml v2->v3 bump; current
+#   setup-ocaml has no opam-depext input at all.)
+# - No dune-cache input: deprecated upstream in favour of the default
+#   cache behaviour; the compiler switch itself is still cached by the
+#   action, and project deps intentionally re-resolve every run.
 # - Every `run:` below uses bash (also present on the windows runner
 #   via Git for Windows).
 
@@ -49,29 +46,24 @@ jobs:
           - name: linux
             os: ubuntu-latest
             ocaml: "5.5.0"
-            depext: false
             nosandbox: true
           - name: macos
             os: macos-latest
             ocaml: "5.5.0"
-            depext: true
             nosandbox: false
           - name: windows
             os: windows-latest
             ocaml: "5.3"
-            depext: true
             nosandbox: false
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up OCaml
         uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: ${{ matrix.ocaml }}
-          opam-depext: ${{ matrix.depext }}
           opam-disable-sandboxing: ${{ matrix.nosandbox }}
-          dune-cache: true
 
       - name: Install dependencies
         run: opam install --deps-only -y .
@@ -93,7 +85,74 @@ jobs:
 
       - name: Upload actual output on golden failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: actual-tal-${{ matrix.name }}
           path: ci.actual.tal
+
+  release:
+    # Compiler-only releases (no games): each artifact is the etal
+    # binary plus the vendor/ tree (VMs, assembler, web emulator), so
+    # -r/bundle/web work out of the box wherever that OS's VM row
+    # exists (today: linux; macOS/Windows light up when their VM
+    # binaries land in vendor/).
+    name: release (${{ matrix.asset }})
+    needs: [etal]
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+            ocaml: "5.5.0"
+            nosandbox: true
+            asset: etal-linux-x86_64.tar.gz
+          - name: macos
+            os: macos-latest
+            ocaml: "5.5.0"
+            nosandbox: false
+            asset: etal-macos-arm64.tar.gz
+          - name: windows
+            os: windows-latest
+            ocaml: "5.3"
+            nosandbox: false
+            asset: etal-windows-x86_64.zip
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml }}
+          opam-disable-sandboxing: ${{ matrix.nosandbox }}
+
+      - name: Install dependencies
+        run: opam install --deps-only -y .
+
+      - name: Build
+        run: opam exec -- dune build @all
+
+      - name: Stage package (compiler + vendor tree)
+        run: |
+          rm -rf pkg && mkdir pkg
+          cp _build/default/src/bin/etal.exe pkg/etal.exe
+          cp -r vendor pkg/vendor
+
+      - name: Pack archive (unix)
+        # NOTE: the binary keeps dune's uniform `etal.exe` name on all
+        # OSes (runs fine everywhere, zero rename fragility).
+        if: matrix.name != 'windows'
+        run: tar -czf ${{ matrix.asset }} -C pkg etal.exe vendor
+
+      - name: Pack archive (windows)
+        if: matrix.name == 'windows'
+        run: powershell.exe -NoProfile -Command "Compress-Archive -Path pkg\\etal.exe,pkg\\vendor -DestinationPath ${{ matrix.asset }}"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}
