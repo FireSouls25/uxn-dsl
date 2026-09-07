@@ -89,8 +89,12 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v5
         with:
+          # One of build/*/etal (unix) or build/*/etal.exe (windows)
+          # matches per runner; the other pattern is simply absent.
           name: etal-${{ matrix.name }}
-          path: _build/default/src/bin/etal.exe
+          path: |
+            build/*/etal
+            build/*/etal.exe
           if-no-files-found: error
           retention-days: 7
 
@@ -139,15 +143,15 @@ jobs:
 
       - name: Stage package (compiler + vendor tree)
         run: |
-          test -f pkg/etal.exe || { echo "compiler artifact missing in pkg/:"; ls -R pkg; exit 1; }
+          ls pkg/etal 2>/dev/null || ls pkg/etal.exe 2>/dev/null || { echo "compiler artifact missing in pkg/:"; ls -R pkg; exit 1; }
           cp -r vendor pkg/vendor
           ls -R pkg | head -n 12
 
       - name: Pack archive (unix)
-        # NOTE: the binary keeps dune's uniform `etal.exe` name on all
-        # OSes (runs fine everywhere, zero rename fragility).
+        # NOTE: extensionless on unix (`etal`), `.exe` on Windows —
+        # each platform's conventional executable name.
         if: matrix.name != 'windows'
-        run: tar -czf ${{ matrix.asset }} -C pkg etal.exe vendor
+        run: tar -czf ${{ matrix.asset }} -C pkg etal vendor
 
       - name: Pack archive (windows)
         if: matrix.name == 'windows'

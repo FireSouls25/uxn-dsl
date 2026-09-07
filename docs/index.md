@@ -42,7 +42,7 @@ etal --target web hello.ux -o hello.html  # single self-contained web page
 ```
 
 Every stage is deliberately boring: the lexer, parser, type checker and code
-generator are separate passes (`src/lib/`), macros expand to AST *before*
+generator are separate passes (`src/{lexer,parser,sem,codegen}/`), macros expand to AST *before*
 type checking, and imports splice whole files together before anything else
 runs. There is no runtime, no standard library linked into your ROM beyond a
 handful of `%`-macros and the entry vector — what you write is what runs.

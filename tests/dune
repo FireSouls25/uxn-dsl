@@ -2,9 +2,12 @@
 ; nothing). Behavioural gates live in CI shell steps (golden .tal
 ; diff, byte-exact ROM runs, portability gate).
 (executables
- (names test_lexer test_parse test_parse2 test_parse3 test_str test_str2)
- (libraries etal_lib))
+ (names test_lexer test_str test_str2)
+ (libraries etal_lexer))
+(executables
+ (names test_parse test_parse2 test_parse3)
+ (libraries etal_lexer etal_parser))
 
 (test
  (name test_loader)
- (libraries etal_lib))
+ (libraries etal_loader))

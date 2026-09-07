@@ -1,0 +1,9 @@
+; Copy of the compiler binary for macos-arm. Fires only on matching OS+arch;
+; plain `dune build` always yields exactly one populated platform dir.
+; Non-compiler artifacts (reports, symbols, ...) belong in extra/ if ever needed.
+(rule
+ (mode promote)
+ (target etal)
+ (enabled_if (and (= %{os} macos) (= %{architecture} arm64)))
+ (deps ../../src/main.exe)
+ (action (copy ../../src/main.exe %{target})))

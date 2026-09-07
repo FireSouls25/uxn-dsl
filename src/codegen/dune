@@ -1,0 +1,7 @@
+; Phase 4: checked AST -> Uxntal text.
+(library
+ (name etal_codegen)
+ (package etal)
+ (wrapped false)
+ (modules codegen)
+ (libraries etal_parser etal_sem))

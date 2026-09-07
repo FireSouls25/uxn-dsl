@@ -3,7 +3,7 @@
  * Code generation is fully host-independent: the front-end produces
  * ROM bytes, and a backend only wraps them in a per-platform carrier.
  * Adding a platform = a new module matching TARGET (plus, for native
- * targets, a row selecting its VM); bin/etal.ml dispatches on it and
+ * targets, a row selecting its VM); src/main.ml dispatches on it and
  * never changes per platform. *)
 
 (** A bundle backend: wrap already-assembled ROM bytes into an
@@ -14,8 +14,8 @@ module type S = sig
 end
 
 (* Candidate vendor/ directories for a running etal binary: next to
-   the exe, then walking up (covers bin/etal, _build/.../etal.exe,
-   and legacy src/etal layouts). *)
+   the exe, then walking up (covers build/<platform>/etal.exe,
+   _build/.../main.exe, and legacy layouts). *)
 let vendor_candidates () =
   let exe_dir = Filename.dirname Sys.executable_name in
   let up n =

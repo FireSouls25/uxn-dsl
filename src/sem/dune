@@ -1,0 +1,7 @@
+; Phase 3: pre-codegen semantics — macro expansion, then type checking.
+(library
+ (name etal_sem)
+ (package etal)
+ (wrapped false)
+ (modules types expand)
+ (libraries etal_parser))

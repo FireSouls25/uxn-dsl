@@ -20,4 +20,4 @@ raw blocks, string printing, real SFT. Targets: `.tal` (`-t`), `.rom`
 (default bundle mode, `--target native|web`). Vendored Linux VM
 (glibc 2.17 floor) and pinned uxn5 web emulator. Snake game plus
 `diff`-gated fixture suite. Dune + opam build (`dune build`, binary
-at `bin/etal`), cross-platform CI.
+at `build/<platform>/etal`, `etal.exe` on Windows), cross-platform CI.

@@ -46,8 +46,8 @@ projects split.
 ## Running it
 
 ```sh
-./bin/etal examples/snake/main.ux -o /tmp/snake && /tmp/snake -2
-./bin/etal --target web examples/snake/main.ux -o /tmp/snake.html
+./build/linux-x86/etal examples/snake/main.ux -o /tmp/snake && /tmp/snake -2
+./build/linux-x86/etal --target web examples/snake/main.ux -o /tmp/snake.html
 ```
 
 Arrows steer, space pauses/resumes/restarts. The harness variant

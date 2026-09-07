@@ -51,6 +51,8 @@ let read_text path =
   let s = really_input_string ic n in
   close_in ic;
   s
+(* NOTE: intentionally duplicates Loader.read_source instead of calling
+   it, so etal_target stays independent of etal_loader. *)
 
 let emit_html ~title ~game_name ~rom_bytes ~vendor_dir =
   let js = List.map (fun rel ->

@@ -1,0 +1,6 @@
+; Phase 1: source text -> tokens. No dependencies.
+(library
+ (name etal_lexer)
+ (package etal)
+ (wrapped false)
+ (modules token lexer))

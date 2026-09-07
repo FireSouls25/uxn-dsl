@@ -1,0 +1,7 @@
+; Phase 2: tokens -> AST.
+(library
+ (name etal_parser)
+ (package etal)
+ (wrapped false)
+ (modules ast parser)
+ (libraries etal_lexer))

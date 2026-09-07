@@ -39,8 +39,12 @@ opam exec -- dune build @all
 opam exec -- dune runtest                  
 ```
 
-`./bin/etal` forwards to the dune-built compiler (run `dune build` first;
-on Windows call `_build/default/src/bin/etal.exe` directly).
+`dune build` puts the compiler at `build/<platform>/etal`
+(`linux-x86`, `macos-arm`, `windows-x86` — exactly one populates, matching
+the building machine; Windows builds `etal.exe` instead, as executables
+require there). Anything that is not the compiler would go under
+`build/<platform>/extra/`. Use it as `./build/linux-x86/etal …`
+(substitute your platform).
 
 ## Usage
 

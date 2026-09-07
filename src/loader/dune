@@ -1,0 +1,7 @@
+; Phase 5: input loading (multi-file import graph).
+(library
+ (name etal_loader)
+ (package etal)
+ (wrapped false)
+ (modules loader)
+ (libraries etal_lexer etal_parser))

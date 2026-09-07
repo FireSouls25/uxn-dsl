@@ -8,14 +8,17 @@ Prerequisites: OCaml ≥ 5.0 with opam, and dune ≥ 3.24 (exact pins in
 ```sh
 opam switch create etal ocaml-system   # or your existing 5.x switch
 opam install --locked --deps-only -y . # exact pinned deps
-opam exec -- dune build @all           # binary at _build/…, see below
+opam exec -- dune build @all           # compiler per platform, see below
 opam exec -- dune runtest              # lexer/parser probes + golden diff
 ```
 
 `dune build` leaves everything under `_build/` — never in `src/`.
-For convenience, `bin/etal` is a tiny forwarder script to the built
-binary (build first; on Windows call
-`_build/default/src/bin/etal.exe` directly).
+The compiler binary is additionally copied to `build/<platform>/etal`
+(`linux-x86`, `macos-arm`, `windows-x86`; exactly one populates, matching
+the building machine; Windows builds `etal.exe` instead, as executables
+require there), so `./build/linux-x86/etal …` always works
+(substitute your platform). Anything that is not the compiler would go
+under `build/<platform>/extra/`.
 
 ## The `etal` CLI
 
@@ -54,7 +57,7 @@ vendor/
 ```
 
 The compiler finds these relative to its own location (walking up
-through `bin/`, `_build/…/` and legacy layouts), falling back to a
+through `build/<platform>/`, `_build/…/` and legacy layouts), falling back to a
 `uxn2/bin` checkout. Nothing is ever fetched at build time.
 
 ## Building the VM (`uxn2/build.zig`)

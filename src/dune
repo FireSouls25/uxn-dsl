@@ -1,0 +1,6 @@
+; Compiler entry point. Public name stays `etal` so %{exe:etal} keeps resolving.
+(executable
+ (name main)
+ (package etal)
+ (public_name etal)
+ (libraries etal_lexer etal_parser etal_sem etal_codegen etal_loader etal_target))

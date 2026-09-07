@@ -1,0 +1,7 @@
+; Phase 6: output backends — wrap assembled ROMs per platform.
+; Self-contained: file IO it needs lives here (Target helpers).
+(library
+ (name etal_target)
+ (package etal)
+ (wrapped false)
+ (modules target target_native target_web))
