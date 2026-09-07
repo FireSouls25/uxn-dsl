@@ -139,3 +139,10 @@ DSL can't yet say can be embedded with `raw { }`.
 - `sh tests/portability.sh` — the Linux VM contract (glibc floor, dependency
   closure, smoke boot). GitHub Actions runs all of the above on Linux, macOS
   and Windows (`.github/workflows/ci.yml`).
+
+## Documentation
+
+Full language and toolchain docs live in [`docs/`](docs/) (plain Markdown,
+ready to publish as a GitHub Pages site): design decisions, syntax reference
+for every construct, the exact Uxn mapping, an honest limitations list,
+toolchain guide, and an annotated Snake walkthrough.
