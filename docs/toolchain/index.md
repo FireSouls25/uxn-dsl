@@ -100,6 +100,6 @@ zig build -Dtarget=aarch64-macos -Dsdl-prefix=/opt/homebrew      # macOS (needs 
 ## Versioning
 
 `0.x.y` until a far-off 1.0.0: `x` = new working features, `y` =
-patches and progress. The version lives in `etal.opam` (`0.1.0`,
+patches and progress. The version lives in `etal.opam` (`0.1.1`,
 locked with exact deps in `etal.opam.locked`); releases are git tags
-(`v0.1.0`, …) built by CI. History in [Changelog](../CHANGELOG.md).
+(`v0.1.1`, …) built by CI. History in [Changelog](../CHANGELOG.md).
