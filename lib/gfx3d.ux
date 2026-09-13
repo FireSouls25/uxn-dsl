@@ -1,0 +1,112 @@
+( lib/gfx3d.ux — software 3D wireframe over fix16 (Varvara has
+  no 3D; this projects with the standard formulas). All geometry is
+  fix16 8.8. Angles come from trig.ux turns256; the game computes
+  sin/cos once per frame and passes them in.
+  Model units are pixels-as-fix16 (1.0 = 1px): a ±32px cube is
+  ±8192 raw. Keep the model in front of the camera: dist must
+  exceed the largest rotated radius, else points saturate
+  offscreen (clipped by the emulator, harmless).
+  Import fix16/anim siblings as needed; plot needs Screen declared
+  (devices first, per the library rule). )
+
+import "fix16.ux"
+
+Vec3 :: struct { x: u16; y: u16; z: u16; };
+Proj :: struct { x: u16; y: u16; };
+
+buffer model[16]: Vec3;
+buffer work[16]: Vec3;
+buffer proj[16]: Proj;
+
+vset :: fn(i: u16, x: u16, y: u16, z: u16) {
+    model[i].x = x;
+    model[i].y = y;
+    model[i].z = z;
+}
+
+( Scratch a fresh frame: model -> work for n verts. Rotation is
+  destructive, so call this before rotating every frame. )
+frame_begin :: fn(n: u16) {
+    for i in 0..n {
+        work[i].x = model[i].x;
+        work[i].y = model[i].y;
+        work[i].z = model[i].z;
+    }
+}
+
+( Y rotation in place: x' = x*c + z*s, z' = z*c - x*s. )
+rot_y :: fn(n: u16, s: u16, c: u16) {
+    for i in 0..n {
+        x: u16 = work[i].x;
+        z: u16 = work[i].z;
+        work[i].x = x16_add(x16_mul(x, c), x16_mul(z, s));
+        work[i].z = x16_sub(x16_mul(z, c), x16_mul(x, s));
+    }
+}
+
+( X rotation in place: y' = y*c - z*s, z' = y*s + z*c. )
+rot_x :: fn(n: u16, s: u16, c: u16) {
+    for i in 0..n {
+        y: u16 = work[i].y;
+        z: u16 = work[i].z;
+        work[i].y = x16_sub(x16_mul(y, c), x16_mul(z, s));
+        work[i].z = x16_add(x16_mul(y, s), x16_mul(z, c));
+    }
+}
+
+( Perspective: s = dist/(z+dist); sx = cx + x*s. )
+project :: fn(n: u16, dist: u16, cx: u16, cy: u16) {
+    for i in 0..n {
+        x: u16 = work[i].x;
+        y: u16 = work[i].y;
+        z: u16 = work[i].z;
+        t: u16 = x16_add(z, dist);
+        s: u16 = x16_div(dist, t);
+        proj[i].x = x16_add(cx, x16_mul(x, s));
+        proj[i].y = x16_add(cy, x16_mul(y, s));
+    }
+}
+
+( One pixel. A macro so 600 pixels/frame cost no JSR2 each. )
+macro plot(x: u16, y: u16, color: u8) {
+    Screen.x = x16_to_int(x);
+    Screen.y = x16_to_int(y);
+    Screen.pixel = color;
+}
+
+( DDA line between projected verts a and b. Slope is one fix16
+  divide up front, then adds per pixel; both endpoints plotted. )
+edge :: fn(a: u16, b: u16, color: u8) {
+    x0: u16 = proj[a].x;
+    y0: u16 = proj[a].y;
+    x1: u16 = proj[b].x;
+    y1: u16 = proj[b].y;
+    dx: u16 = x16_sub(x1, x0);
+    dy: u16 = x16_sub(y1, y0);
+    ax: u16 = dx;
+    if ax > 32767 {
+        ax = 0 - ax;
+    }
+    ay: u16 = dy;
+    if ay > 32767 {
+        ay = 0 - ay;
+    }
+    steps: u16 = x16_to_int(ax);
+    if x16_to_int(ay) > steps {
+        steps = x16_to_int(ay);
+    }
+    if steps == 0 {
+        plot(x0, y0, color);
+        return;
+    }
+    dxs: u16 = x16_div(dx, steps << 8);
+    dys: u16 = x16_div(dy, steps << 8);
+    x: u16 = x0;
+    y: u16 = y0;
+    for k in 0..steps {
+        plot(x, y, color);
+        x = x16_add(x, dxs);
+        y = x16_add(y, dys);
+    }
+    plot(x1, y1, color);
+}

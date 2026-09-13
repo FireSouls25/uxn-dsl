@@ -1,0 +1,35 @@
+( lib/anim.ux — frame animation over object rows.
+  Frames live in one shared u16 table (tile addresses, or plain
+  test values — the stepper only copies); each object holds a base
+  offset, length, rate and tick. Rate is frames-per-advance inverse:
+  the frame advances every `rate` ticks (rate >= 1). )
+
+import "object.ux"
+
+buffer anim_frames[64]: u16;
+buffer anim_base[16]: u8;
+buffer anim_len[16]: u8;
+buffer anim_rate[16]: u8;
+buffer anim_tick[16]: u8;
+
+anim_play :: fn(i: u16, base: u8, n: u8, rate: u8) {
+    anim_base[i] = base;
+    anim_len[i] = n;
+    anim_rate[i] = rate;
+    anim_tick[i] = 0;
+}
+
+anim_step :: fn(i: u16) {
+    t: u8 = anim_tick[i] + 1;
+    anim_tick[i] = t;
+    rate: u8 = anim_rate[i];
+    frame: u8 = 0;
+    if rate != 0 {
+        frame = t / rate;
+    }
+    n: u8 = anim_len[i];
+    if n != 0 {
+        frame = frame % n;
+    }
+    objs[i].tile = anim_frames[anim_base[i] + frame];
+}

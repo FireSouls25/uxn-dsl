@@ -1,0 +1,75 @@
+( lib/u32.ux — 32-bit unsigned predicates over hi/lo short pairs.
+  Modeled on math32.tal (dashes become underscores, same algorithms).
+  A 32-bit value is two u16s, high bits first: (ahi, alo).
+
+  Only single-result operations fit ETAL functions; multi-result ops
+  (add/sub/mul/div with carry in both halves) are caller-composed
+  from u16 arithmetic, e.g.:
+      lo: u16 = alo + blo;             ( wraps mod 65536 )
+      carry: u16 = 0;
+      if lo < alo { carry = 1; }
+      hi: u16 = ahi + bhi + carry;
+  Import with: import "../lib/u32.ux" (path relative to your file). )
+
+u32_eq :: fn(ahi: u16, alo: u16, bhi: u16, blo: u16) -> bool {
+    return (ahi == bhi) && (alo == blo);
+}
+
+u32_ne :: fn(ahi: u16, alo: u16, bhi: u16, blo: u16) -> bool {
+    return (ahi != bhi) || (alo != blo);
+}
+
+u32_is_zero :: fn(ahi: u16, alo: u16) -> bool {
+    return (ahi == 0) && (alo == 0);
+}
+
+u32_non_zero :: fn(ahi: u16, alo: u16) -> bool {
+    return (ahi != 0) || (alo != 0);
+}
+
+u32_lt :: fn(ahi: u16, alo: u16, bhi: u16, blo: u16) -> bool {
+    if ahi != bhi {
+        return ahi < bhi;
+    }
+    return alo < blo;
+}
+
+u32_lteq :: fn(ahi: u16, alo: u16, bhi: u16, blo: u16) -> bool {
+    if ahi != bhi {
+        return ahi < bhi;
+    }
+    return alo <= blo;
+}
+
+u32_gt :: fn(ahi: u16, alo: u16, bhi: u16, blo: u16) -> bool {
+    if ahi != bhi {
+        return ahi > bhi;
+    }
+    return alo > blo;
+}
+
+u32_gteq :: fn(ahi: u16, alo: u16, bhi: u16, blo: u16) -> bool {
+    if ahi != bhi {
+        return ahi > bhi;
+    }
+    return alo >= blo;
+}
+
+( bits needed to represent a byte/short: floor[log2[x]] + 1 )
+u8_bitcount :: fn(x: u8) -> u8 {
+    n: u8 = 0;
+    while x != 0 {
+        x = x >> 1;
+        n = n + 1;
+    }
+    return n;
+}
+
+u16_bitcount :: fn(x: u16) -> u16 {
+    n: u16 = 0;
+    while x != 0 {
+        x = x >> 1;
+        n = n + 1;
+    }
+    return n;
+}

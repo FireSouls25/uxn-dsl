@@ -31,7 +31,12 @@
 name: etal-ci
 
 on:
+  # dev branch pushes skip CI (push freely while iterating); CI runs on
+  # main pushes, version tags (releases) and any pull request, so opening
+  # a PR from dev still gates before merge.
   push:
+    branches: [main]
+    tags: ['v*']
   pull_request:
 
 defaults:
@@ -111,8 +116,8 @@ jobs:
     # Compiler-only releases (no games): each artifact is the etal
     # binary plus the vendor/ tree (VMs, assembler, web emulator), so
     # -r/bundle/web work out of the box wherever that OS's VM row
-    # exists (today: linux; macOS/Windows light up when their VM
-    # binaries land in vendor/).
+    # exists (linux-x86_64 and macos-arm64 today; macos-x86_64 and
+    # Windows light up when their VM binaries land in vendor/).
     # No toolchain here: the binary comes from the build-test job's artifact
     # (same bytes CI validated), so release needs no OCaml/opam/dune.
     name: package-release etal (${{ matrix.asset }})

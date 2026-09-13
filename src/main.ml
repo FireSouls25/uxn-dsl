@@ -69,10 +69,17 @@ let () =
       (List.length (Lexer.tokenize source))
   end;
 
-  (* Type checking *)
+  (* Resolve `:=` inferred declarations into explicit ones *)
+  let program = Elab.elaborate_program program in
+
+  (* Type checking (whole program, including functions no one
+     calls — typos fail here, not silently after pruning) *)
   let _env = Types.type_check_program program in
   if !verbose then
     eprintf "Type checking passed\n";
+
+  (* Drop functions unreachable from main (saves zero-page slots) *)
+  let program = Dce.eliminate program in
 
   (* Code generation *)
   let tal_code = Codegen.codegen_program program in

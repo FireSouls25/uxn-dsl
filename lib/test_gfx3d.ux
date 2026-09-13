@@ -1,0 +1,75 @@
+( gfx3d harness: identity, exact Y-90deg, and table-45deg
+  projections of a +-32px cube (dist 72, center 64,64). Each projected
+  short prints as hi,lo bytes. Expected console bytes:
+  06 80 06 80 79 80 06 80 06 80 79 80 79 80 79 80
+  29 e0 29 e0 56 20 29 e0 29 e0 56 20 56 20 56 20
+  29 e0 29 e0 06 80 06 80 29 e0 56 20 06 80 79 80
+  56 20 29 e0 79 80 06 80 56 20 56 20 79 80 79 80
+  fe 12 1f 09 40 00 66 c9 1d b6 51 25 40 00 7e b9
+  40 00 0f c9 81 ee 1f 09 40 00 3a b2 62 4a 51 25 )
+device Screen 32 {
+    vector: 2
+    width: 2
+    height: 2
+    auto: 1
+    pad: 1
+    x: 2
+    y: 2
+    addr: 2
+    pixel: 1
+    sprite: 1
+}
+import "trig.ux"
+import "gfx3d.ux"
+
+emit16 :: fn(v: u16) {
+    varvara.console.write((v >> 8) & 255);
+    varvara.console.write(v & 255);
+}
+
+emit_proj :: fn() {
+    emit16(proj[0].x);
+    emit16(proj[0].y);
+    emit16(proj[1].x);
+    emit16(proj[1].y);
+    emit16(proj[2].x);
+    emit16(proj[2].y);
+    emit16(proj[3].x);
+    emit16(proj[3].y);
+    emit16(proj[4].x);
+    emit16(proj[4].y);
+    emit16(proj[5].x);
+    emit16(proj[5].y);
+    emit16(proj[6].x);
+    emit16(proj[6].y);
+    emit16(proj[7].x);
+    emit16(proj[7].y);
+}
+
+main :: fn() {
+    trig_init();
+    vset(0, 57344, 57344, 57344);
+    vset(1, 8192, 57344, 57344);
+    vset(2, 57344, 8192, 57344);
+    vset(3, 8192, 8192, 57344);
+    vset(4, 57344, 57344, 8192);
+    vset(5, 8192, 57344, 8192);
+    vset(6, 57344, 8192, 8192);
+    vset(7, 8192, 8192, 8192);
+    frame_begin(8);
+    rot_y(8, 0, 256);
+    rot_x(8, 0, 256);
+    project(8, 18432, 16384, 16384);
+    emit_proj();
+    frame_begin(8);
+    rot_y(8, 256, 0);
+    rot_x(8, 0, 256);
+    project(8, 18432, 16384, 16384);
+    emit_proj();
+    frame_begin(8);
+    rot_y(8, sin256(32), cos256(32));
+    rot_x(8, sin256(32), cos256(32));
+    project(8, 18432, 16384, 16384);
+    emit_proj();
+    edge(0, 1, 1);
+}

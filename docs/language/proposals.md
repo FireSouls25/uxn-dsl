@@ -38,6 +38,8 @@ Design constraints that keep it coherent:
   *and* all four directional branches at once.
 
 Status: accepted as scoped above; not scheduled.
+(obsolete — implemented on `dev`: `x: u16 mod N` with stores reduced
+via the `%` lowering; see [types](types.md#modular-integers).)
 
 ## 2. Implicit `brk` in events — half already true; finish it via `return`
 
@@ -65,6 +67,8 @@ on_frame :: event() {
 
 *P0*: one conditional in statement codegen plus a test. No syntax,
 no type changes.
+(obsolete — implemented on `dev`: bare `return;` emits `BRK` in
+events, `JMP2r` elsewhere; see [statements](statements.md).)
 
 ## 3. `switch`/`match` dispatch — accept, desugar first
 
@@ -97,6 +101,10 @@ Two honest halves, deliberately split:
   default arm; sparse matches keep the compare chain.
 
 Status: v1 accepted; v2 on merit per use case.
+(obsolete — v1 implemented on `dev`: parser builds `Match`,
+expander lowers to a freshened temp + if/elif chain with
+single-evaluation; integer arms plus trailing `_`; see
+[statements](statements.md).)
 
 ## 4. Structs over parallel arrays — accept
 
@@ -119,6 +127,8 @@ both loads and stores. Keep `group` as-is for zero-page structs;
 field-offset environments, and the combined Index+Field codegen paths
 in both directions. The shift loop collapses from two lines to one,
 and the desync class disappears by construction.
+(obsolete — implemented on `dev` as scoped, plus locals and strict
+whole-value rejection; see [declarations](declarations.md).)
 
 ## 5. Ring buffer type — accept as library first, correct the framing
 
@@ -191,6 +201,8 @@ works unchanged since expansion precedes checking. Lexer cost is one
 token (`:=` currently lexes as `:` + `=` and fails in the parser, so
 nothing valid changes meaning). *P0–P1*: one token, one AST node,
 type-side resolution, freshening already handles the new binder.
+(obsolete — implemented on `dev` exactly as sketched, as an
+elaborate-then-check pass; see [declarations](declarations.md).)
 
 ---
 
@@ -246,6 +258,8 @@ byte elements). Anything else is treated as a short — which is sound
 for every case including `u16` arithmetic and short-width `&&`/`||`
 results. No syntax, no type changes; every existing program keeps its
 bytes except the previously-broken ones.
+(obsolete — implemented on `dev` as `codegen_cond`, exempting only
+raw literals of unknowable width; see [statements](statements.md).)
 
 ## 9. Pre-pass function signatures (P0)
 
@@ -256,6 +270,8 @@ macros needed whole-program collection. Fix it the same way: collect
 all `FuncDecl` signatures before either pass. This deliberately does
 *not* enable recursion (locals stay static; that limitation stands) —
 it only makes call checking order-independent.
+(obsolete — implemented on `dev`: pre-pass in checker, elaborator
+and generator; undefined calls are now a compile error too.)
 
 ## 10. Data blobs as read-only arrays (P1)
 
@@ -302,6 +318,9 @@ bounds (literals, idents, constants); anything that could call or
 store keeps current evaluate-each-time semantics, documented as
 such. The purity predicate is the entire design; the rest is one
 temp slot.
+(obsolete — implemented on `dev` for literal/variable/constant
+bounds; call/store bounds keep evaluate-each-time; see
+[statements](statements.md).)
 
 ## 15. `meta {}` block for ROM metadata (P0, UI-relevant)
 
@@ -316,6 +335,10 @@ meta { title: "Snake", author: "..." }
 Emits the blob plus the wiring. Exact blob layout to be pinned
 against the Varvara metadata doc during implementation — the
 mechanism is proven, the format needs one spec check.
+(obsolete — implemented on `dev`: blob in the spec shape
+(`00 title 0a author 00` + `$2` reserve), boot-time
+`System/metadata` write, auto System table when undeclared, dup and
+shape validation; see [declarations](declarations.md).)
 
 ## 16. Button-mask input idiom (docs now, `match` later)
 

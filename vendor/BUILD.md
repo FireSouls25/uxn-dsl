@@ -101,7 +101,6 @@ bwrap --unshare-user --uid 0 --gid 0 \
 ## macOS (TODO — needs a Mac; you volunteered one)
 
 On the Mac, from this repo's `uxn2/` directory:
-
 ```
 # 0. SDL2 for your arch (arm64 Apple Silicon shown; Intel similar):
 brew install sdl2
@@ -139,6 +138,34 @@ cp /tmp/uxn2-macos src/vendor/macos-<arch>/uxn2
   static SDL2 build, or co-ship `libSDL2-2.0.0.dylib` in the bundle
   payload next to the binary (payload tarballs already support
   sibling files).
+
+## macos-arm64 (done 2026-09-13, needs SDL2 fix + provenance)
+
+`vendor/macos-arm64/uxn2`, built on a MacBook Air arm64 via
+`zig build` from `uxn2/` (exact command + zig version: TODO —
+record from the build machine).
+
+- `file`: Mach-O 64-bit arm64 (verified in-repo).
+- `otool -L`: Cocoa, IOKit, CoreAudio, AudioToolbox, CoreVideo,
+  `@rpath/SDL2.framework/Versions/A/SDL2`, libSystem, libobjc.
+- **Open SDL2 problem (blocks running):** the binary wants
+  `SDL2.framework` via `@rpath` with no resolving `LC_RPATH`, and
+  stock macOS ships neither the framework nor Homebrew's
+  `libSDL2-2.0.0.dylib` under that path — `dyld: Library not
+  loaded`, abort. Pick one on the Mac and record it here:
+  (a) install `SDL2.framework` (libsdl.org dmg) to
+  `/Library/Frameworks` + `install_name_tool -add_rpath
+  /Library/Frameworks`, or export `DYLD_FRAMEWORK_PATH`;
+  (b) `brew install sdl2` + `install_name_tool -change` the
+  `@rpath/...` reference to `/opt/homebrew/lib/libSDL2-2.0.0.dylib`;
+  (c) rebuild against the Homebrew dylib (`-Dsdl-prefix`) so no
+  framework path is involved.
+- Still to record: `uxn2 -v` output, `codesign -s -` ad-hoc
+  signature status (required to run at all), compiler + SDL2
+  versions, `uname -m`.
+- The `etal` compiler selects this row automatically on
+  Darwin/arm64 (`host_row` in `src/target/target_native.ml`);
+  `macos-x86_64` remains TODO.
 
 ## windows-x86_64 (TODO — MinGW headers ship with zig)
 

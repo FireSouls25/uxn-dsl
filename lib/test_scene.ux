@@ -1,0 +1,44 @@
+( scene + menu harness: id switching, edge polls, wraparound.
+  Expected console bytes: 00 00 00 02 00 10 00 00 00 20 00 01
+  00 00 00 02 )
+device Screen 32 {
+    vector: 2
+    width: 2
+    height: 2
+    auto: 1
+    pad: 1
+    x: 2
+    y: 2
+    addr: 2
+    pixel: 1
+    sprite: 1
+}
+import "screen.ux"
+import "scene.ux"
+import "menu.ux"
+
+emit16 :: fn(v: u16) {
+    varvara.console.write((v >> 8) & 255);
+    varvara.console.write(v & 255);
+}
+
+main :: fn() {
+    emit16(scene);
+    scene_go(2);
+    emit16(scene);
+    wipe(PIXEL_FILL);
+    menu_items(3);
+    p: u8 = menu_poll(16);
+    emit16(p);
+    q: u8 = menu_poll(16);
+    emit16(q);
+    r: u8 = menu_poll(48);
+    emit16(r);
+    menu_next();
+    emit16(menu_sel);
+    menu_next();
+    menu_next();
+    emit16(menu_sel);
+    menu_prev();
+    emit16(menu_sel);
+}

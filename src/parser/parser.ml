@@ -43,21 +43,45 @@ let expect_int parser =
   | t -> failwith (Printf.sprintf "Expected integer, got %s" (token_to_string t))
 
 let rec parse_typ parser =
-  match peek parser with
-  | U8 -> ignore (advance parser); TypU8
-  | U16 -> ignore (advance parser); TypU16
-  | BOOL -> ignore (advance parser); TypBool
-  | LBRACKET ->
+  let base =
+    match peek parser with
+    | U8 -> ignore (advance parser); TypU8
+    | U16 -> ignore (advance parser); TypU16
+    | BOOL -> ignore (advance parser); TypBool
+    | LBRACKET ->
+      ignore (advance parser);
+      let size = expect_int parser in
+      expect parser RBRACKET;
+      let elem_typ = parse_typ parser in
+      TypArray (elem_typ, size)
+    | AMPERSAND ->
+      ignore (advance parser);
+      let elem_typ = parse_typ parser in
+      TypPointer elem_typ
+    | IDENT s ->
+      (* A struct name used as a type (`x: Point`). Anything else fails
+         later in the checker with `unknown type`, keeping the error
+         at the use site. *)
+      ignore (advance parser);
+      TypStruct s
+    | t -> failwith (Printf.sprintf "Expected type, got %s" (token_to_string t))
+  in
+  (* Modular integer suffix: `u16 mod 16`. The modulus must be a
+     positive literal fitting the base (u8: 1..256, u16: 1..65535);
+     m = 256 on a u8 base is the identity (every byte is in range). *)
+  (match peek parser with
+  | MOD ->
     ignore (advance parser);
-    let size = expect_int parser in
-    expect parser RBRACKET;
-    let elem_typ = parse_typ parser in
-    TypArray (elem_typ, size)
-  | AMPERSAND ->
-    ignore (advance parser);
-    let elem_typ = parse_typ parser in
-    TypPointer elem_typ
-  | t -> failwith (Printf.sprintf "Expected type, got %s" (token_to_string t))
+    (match base with
+    | TypU8 | TypU16 ->
+      let m = expect_int parser in
+      let max_m = match base with TypU8 -> 256 | _ -> 65535 in
+      if m < 1 || m > max_m then
+        failwith (Printf.sprintf "modulus %d out of range for %s (want 1..%d)"
+          m (token_to_string (if base = TypU8 then U8 else U16)) max_m);
+      TypMod (base, m)
+    | _ -> failwith "mod applies to u8/u16 only")
+  | _ -> base)
 
 and parse_primary parser =
   match peek parser with
@@ -312,6 +336,39 @@ and parse_stmt parser =
       | _ -> []
     in
     If (condition, then_body, elifs, else_body)
+  | MATCH ->
+    (* `match scrut { pat => { ... } _ => { ... } }`: integer-literal
+       arms plus one optional trailing `_` default. Lowered by the
+       expander (freshened temp + if/elif chain), so the scrutinee
+       evaluates exactly once. *)
+    ignore (advance parser);
+    let scrut = parse_expr parser in
+    expect parser LBRACE;
+    let rec parse_arms seen_default =
+      match peek parser with
+      | RBRACE -> ignore (advance parser); []
+      | _ ->
+        if seen_default then
+          failwith "match default arm `_` must be last";
+        let pat =
+          match advance parser with
+          | INT_LITERAL n -> MInt n
+          | UNDERSCORE -> MDefault
+          | t -> failwith (Printf.sprintf "match arm wants an integer or `_`, got %s"
+              (token_to_string t))
+        in
+        (match peek parser with
+        | FAT_ARROW -> ignore (advance parser)
+        | t -> failwith (Printf.sprintf "match arm wants `=>`, got %s" (token_to_string t)));
+        expect parser LBRACE;
+        let body = parse_stmts parser in
+        expect parser RBRACE;
+        let seen_default = seen_default || pat = MDefault in
+        (pat, body) :: parse_arms seen_default
+    in
+    (match parse_arms false with
+    | [] -> failwith "match needs at least one arm"
+    | arms -> Match (scrut, arms))
   | WHILE ->
     ignore (advance parser);
     let condition = parse_expr parser in
@@ -391,15 +448,47 @@ and parse_stmt parser =
       | Ident id ->
         ignore (advance parser);
         let typ = parse_typ parser in
-        let init =
-          match peek parser with
-          | ASSIGN ->
-            ignore (advance parser);
-            Some (parse_expr parser)
-          | _ -> None
-        in
+        (match peek parser with
+        | ASSIGN ->
+          ignore (advance parser);
+          let init = Some (parse_expr parser) in
+          expect parser SEMICOLON;
+          VarDecl (id, typ, init)
+        | COLON ->
+          (* `name : type : value`: explicit-type constant. *)
+          ignore (advance parser);
+          let value = parse_expr parser in
+          expect parser SEMICOLON;
+          ConstDecl (id, Some typ, value)
+        | _ ->
+          expect parser SEMICOLON;
+          VarDecl (id, typ, None))
+      | _ ->
+        parser.pos <- saved_pos;
+        let expr = parse_expr parser in
         expect parser SEMICOLON;
-        VarDecl (id, typ, init)
+        ExprStmt expr)
+    | COLON_ASSIGN ->
+      (* `name := value`: inferred-type mutable. *)
+      (match !left with
+      | Ident id ->
+        ignore (advance parser);
+        let value = parse_expr parser in
+        expect parser SEMICOLON;
+        InferDecl (id, value)
+      | _ ->
+        parser.pos <- saved_pos;
+        let expr = parse_expr parser in
+        expect parser SEMICOLON;
+        ExprStmt expr)
+    | DOUBLE_COLON ->
+      (* `name :: value`: inferred-type constant. *)
+      (match !left with
+      | Ident id ->
+        ignore (advance parser);
+        let value = parse_expr parser in
+        expect parser SEMICOLON;
+        ConstDecl (id, None, value)
       | _ ->
         parser.pos <- saved_pos;
         let expr = parse_expr parser in
@@ -644,6 +733,46 @@ let parse_decl parser =
     if buf_len <= 0 then
       failwith (Printf.sprintf "buffer `%s` must have positive length" buf_name);
     BufferDecl { buf_name; buf_len; buf_elem }
+  | META ->
+    (* `meta { title: "...", author: "..." }`: ROM metadata, once per
+       program. Both fields required; unknown fields are typos. *)
+    ignore (advance parser);
+    expect parser LBRACE;
+    let title = ref None in
+    let author = ref None in
+    let rec parse_fields () =
+      match peek parser with
+      | RBRACE -> ignore (advance parser)
+      | IDENT fname ->
+        ignore (advance parser);
+        expect parser COLON;
+        let value =
+          match advance parser with
+          | STRING_LITERAL s -> s
+          | t -> failwith (Printf.sprintf "meta field `%s` wants a string, got %s"
+              fname (token_to_string t))
+        in
+        (match fname with
+        | "title" ->
+          (match !title with
+          | Some _ -> failwith "duplicate meta field `title`"
+          | None -> title := Some value)
+        | "author" ->
+          (match !author with
+          | Some _ -> failwith "duplicate meta field `author`"
+          | None -> author := Some value)
+        | _ -> failwith (Printf.sprintf "unknown meta field `%s` (want title, author)" fname));
+        (match peek parser with
+        | COMMA | SEMICOLON -> ignore (advance parser)
+        | _ -> ());
+        parse_fields ()
+      | t -> failwith (Printf.sprintf "Expected meta field or }, got %s" (token_to_string t))
+    in
+    parse_fields ();
+    (match !title, !author with
+    | Some t, Some a -> MetaDecl (t, a)
+    | None, _ -> failwith "meta block is missing required field `title`"
+    | _, None -> failwith "meta block is missing required field `author`")
   | IDENT name ->
     ignore (advance parser);
     (match peek parser with
@@ -652,22 +781,64 @@ let parse_decl parser =
       (match peek parser with
       | FN -> ignore (advance parser); parse_func parser name false
       | EVENT -> ignore (advance parser); parse_func parser name true
+      | STRUCT ->
+        (* `Point :: struct { x: u16; y: u16 }`: field offsets derive
+           from field sizes; v1 fields are scalar (checked later). *)
+        ignore (advance parser);
+        expect parser LBRACE;
+        let fields = ref [] in
+        let rec parse_fields () =
+          match peek parser with
+          | RBRACE -> ignore (advance parser)
+          | IDENT fname ->
+            ignore (advance parser);
+            expect parser COLON;
+            let ftyp = parse_typ parser in
+            fields := (fname, ftyp) :: !fields;
+            (match peek parser with
+            | COMMA | SEMICOLON -> ignore (advance parser)
+            | _ -> ());
+            parse_fields ()
+          | t -> failwith (Printf.sprintf "Expected field or }, got %s" (token_to_string t))
+        in
+        parse_fields ();
+        (match List.rev !fields with
+        | [] -> failwith (Printf.sprintf "struct `%s` needs at least one field" name)
+        | fs ->
+          let seen = List.map fst fs in
+          if List.length seen <> List.length (List.sort_uniq String.compare seen) then
+            failwith (Printf.sprintf "struct `%s` has duplicate fields" name);
+          (match peek parser with
+          | SEMICOLON -> ignore (advance parser)
+          | _ -> ());
+          StructDecl { struct_name = name; struct_fields = fs })
       | _ ->
         let value = parse_expr parser in
         expect parser SEMICOLON;
-        GlobalConstDecl (name, value))
+        GlobalConstDecl (name, None, value))
+    | COLON_ASSIGN ->
+      ignore (advance parser);
+      let value = parse_expr parser in
+      expect parser SEMICOLON;
+      GlobalInferDecl (name, value)
     | COLON ->
       ignore (advance parser);
       let typ = parse_typ parser in
-      let init =
-        match peek parser with
-        | ASSIGN ->
-          ignore (advance parser);
-          Some (parse_expr parser)
-        | _ -> None
-      in
-      expect parser SEMICOLON;
-      GlobalVarDecl (name, typ, init)
+      (match peek parser with
+      | ASSIGN ->
+        ignore (advance parser);
+        let init = Some (parse_expr parser) in
+        expect parser SEMICOLON;
+        GlobalVarDecl (name, typ, init)
+      | COLON ->
+        (* `name : type : value`: explicit-type constant. *)
+        ignore (advance parser);
+        let value = parse_expr parser in
+        expect parser SEMICOLON;
+        GlobalConstDecl (name, Some typ, value)
+      | _ ->
+        expect parser SEMICOLON;
+        GlobalVarDecl (name, typ, None))
     | _ -> failwith (Printf.sprintf "Unexpected token after identifier %s" name))
   | _ -> failwith (Printf.sprintf "Expected declaration, got %s" (token_to_string (peek parser)))
 

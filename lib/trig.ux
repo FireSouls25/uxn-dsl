@@ -1,0 +1,43 @@
+( lib/trig.ux — turns256 sine/cosine over a self-built table.
+  Angles are u8 turns (0-255 = full circle); values are fix16 8.8.
+  The 65-entry quarter table builds at boot via 3-term Taylor
+  (worst error ~1 LSB at pi/2); quadrants mirror it, so cos(a) is
+  sin(a+64) — free via u8 wraparound. Call trig_init() once before
+  sin256/cos256. Needs fix16.ux ops. )
+
+import "fix16.ux"
+
+buffer sin_tab[65]: u16;
+
+( sin(x) for x in [0, pi/2] as fix16: x - x^3/6 + x^5/120.
+  All intermediates stay in range (x <= 1.58: x^5 <= 9.6). )
+taylor_sin :: fn(x: u16) -> u16 {
+    x2: u16 = x16_mul(x, x);
+    x3: u16 = x16_mul(x2, x);
+    x5: u16 = x16_mul(x3, x2);
+    t: u16 = x16_sub(x, x16_div(x3, 1536));
+    return x16_add(t, x16_div(x5, 30720));
+}
+
+trig_init :: fn() {
+    for i in 0..65 {
+        rad: u16 = i * 804 / 128;
+        sin_tab[i] = taylor_sin(rad);
+    }
+}
+
+sin256 :: fn(a: u8) -> u16 {
+    q: u8 = a & 63;
+    quad: u8 = a >> 6;
+    v: u16 = sin_tab[q];
+    match quad {
+        0 => { return v; }
+        1 => { return sin_tab[64 - q]; }
+        2 => { return 0 - v; }
+        _ => { return 0 - sin_tab[64 - q]; }
+    }
+}
+
+cos256 :: fn(a: u8) -> u16 {
+    return sin256(a + 64);
+}

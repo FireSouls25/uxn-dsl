@@ -7,6 +7,11 @@ type type_env = {
   mutable funcs: (string * (param list * typ option)) list;
   mutable devices: (string * (string * typ) list) list;
   mutable groups: (string * (string * typ) list) list;
+  (* Structs: name -> [(field, type)]; offsets derive from sizes. *)
+  mutable structs: (string * (string * typ) list) list;
+  (* Names bound by `::` / `: t :` at the same env level as vars, so a
+     mutable shadowing declaration wins over an outer constant. *)
+  mutable consts: string list;
   parent: type_env option;
 }
 
@@ -15,6 +20,8 @@ let create_env parent = {
   funcs = [];
   devices = [];
   groups = [];
+  structs = [];
+  consts = [];
   parent;
 }
 
@@ -30,6 +37,124 @@ let lookup_var env name =
 
 let add_var env name typ =
   env.vars <- (name, typ) :: env.vars
+
+let add_const env name =
+  env.consts <- name :: env.consts
+
+(* Is the visible binding of `name` a constant? Resolves alongside the
+   var chain so a mutable shadowing declaration wins. *)
+let rec resolve_const env name =
+  if List.mem_assoc name env.vars then
+    Some (List.mem name env.consts)
+  else
+    match env.parent with
+    | Some parent -> resolve_const parent name
+    | None -> None
+
+(* Modular-integer helpers. *)
+let rec mod_base = function
+  | TypMod (b, _) -> mod_base b
+  | t -> t
+
+let mod_modulus = function
+  | TypMod (_, m) -> Some m
+  | _ -> None
+
+let add_struct env name fields =
+  env.structs <- (name, fields) :: env.structs
+
+let rec lookup_struct env name =
+  try Some (List.assoc name env.structs)
+  with Not_found ->
+    (match env.parent with
+    | Some p -> lookup_struct p name
+    | None -> None)
+
+let lookup_struct_field env sname fname =
+  match lookup_struct env sname with
+  | Some fields ->
+    (try Some (List.assoc fname fields) with Not_found -> None)
+  | None -> None
+
+(* Struct helpers (proposal 4 v1). Whole struct values never touch the
+   stack — only `.field` access compiles — so any value position
+   holding one is a compile error with a field-directed message. *)
+let rec contains_struct = function
+  | TypStruct _ -> true
+  | TypMod (b, _) -> contains_struct b
+  | TypArray (e, _) -> contains_struct e
+  | TypPointer e -> contains_struct e
+  | _ -> false
+
+let reject_struct_value what typ =
+  if contains_struct typ then
+    failwith (Printf.sprintf "%s: cannot use a whole struct value (access `.field` instead)" what)
+
+(* Validate a declared type: structs must be declared (in order),
+   pointers to structs are unsupported, mod-ness is parser-checked. *)
+let rec validate_type env what = function
+  | TypStruct n ->
+    (match lookup_struct env n with
+    | Some _ -> ()
+    | None ->
+      failwith (Printf.sprintf "%s: unknown type `%s` (want u8/u16/bool or a declared struct)" what n))
+  | TypPointer t when contains_struct t ->
+    failwith (Printf.sprintf "%s: pointers to structs are not supported (index buffers instead)" what)
+  | TypArray (e, _) -> validate_type env what e
+  | TypMod (b, _) -> validate_type env what b
+  | _ -> ()
+
+(* Value of type `src` may flow where `dst` is expected (stores,
+   initializers, call arguments). Plain rules (equal, u8 widens to
+   u16) plus: a mod value fits wherever its base fits, and — since
+   the value is already below the modulus — mod(u16, m <= 256) fits
+   u8. Anything flowing INTO a mod slot is reduced at runtime, so
+   plain values of a fitting width are accepted there too. *)
+let rec assign_compat dst src =
+  (* Backstop: whole-struct flows are rejected with directed messages
+     at each site; this just keeps the lattice sound. *)
+  if contains_struct dst || contains_struct src then false
+  else if dst = src then true
+  else match dst, src with
+  | TypU16, TypU8 -> true
+  | TypU16, TypMod _ -> true
+  | TypU8, TypMod (TypU8, _) -> true
+  | TypU8, TypMod (TypU16, m) -> m <= 256
+  | TypMod (b, m), TypMod (b2, m2) ->
+    m = m2 && (b2 = b || (b2 = TypU8 && b = TypU16))
+  | TypMod (b, _), s ->
+    (match mod_base s with
+    | TypU8 -> true
+    | TypU16 -> b = TypU16
+    | _ -> false)
+  | _ -> false
+
+(* Result of `+ - * / %`: same modulus preserves the bound (width
+   widens), mixed moduli are a type error, mixing with plain coerces
+   to plain — the result is no longer bounded. *)
+let arith_result l r =
+  match mod_modulus l, mod_modulus r with
+  | Some m1, Some m2 when m1 = m2 ->
+    let b =
+      if mod_base l = TypU16 || mod_base r = TypU16 then TypU16 else TypU8
+    in
+    TypMod (b, m1)
+  | Some _, Some _ ->
+    failwith "mixed-modulus arithmetic is a type error (reduce one side with % first)"
+  | Some _, None | None, Some _ ->
+    (match mod_base l, mod_base r with
+    | TypU8, TypU8 -> TypU8
+    | TypU16, TypU16 -> TypU16
+    | TypU8, TypU16 -> TypU16
+    | TypU16, TypU8 -> TypU16
+    | _ -> failwith "Invalid operands for arithmetic operation")
+  | None, None ->
+    (match l, r with
+    | TypU8, TypU8 -> TypU8
+    | TypU16, TypU16 -> TypU16
+    | TypU8, TypU16 -> TypU16
+    | TypU16, TypU8 -> TypU16
+    | _ -> failwith "Invalid operands for arithmetic operation")
 
 let rec lookup_func env name =
   try Some (List.assoc name env.funcs)
@@ -82,21 +207,19 @@ let rec type_of_expr env expr =
     let left_typ = type_of_expr env left in
     let right_typ = type_of_expr env right in
     (match op with
-    | Add | Sub | Mul | Div | Mod ->
-      (match left_typ, right_typ with
-      | TypU8, TypU8 -> TypU8
-      | TypU16, TypU16 -> TypU16
-      | TypU8, TypU16 -> TypU16
-      | TypU16, TypU8 -> TypU16
-      | _ -> failwith "Invalid operands for arithmetic operation")
+    | Add | Sub | Mul | Div | Mod -> arith_result left_typ right_typ
     | And | Or | Xor | Lshift | Rshift ->
-      (match left_typ, right_typ with
+      (* Conservative: bitwise results are no longer bounded, so mods
+         decay to their plain base here (comparisons still yield bool). *)
+      (match mod_base left_typ, mod_base right_typ with
       | TypU8, TypU8 -> TypU8
       | TypU16, TypU16 -> TypU16
       | TypU8, TypU16 -> TypU16
       | TypU16, TypU8 -> TypU16
       | _ -> failwith "Invalid operands for bitwise operation")
     | Eq | Neq | Lt | Gt | Le | Ge ->
+      if contains_struct left_typ || contains_struct right_typ then
+        failwith "cannot compare structs (compare fields)";
       TypBool
     | AndAnd | OrOr ->
       TypBool
@@ -105,9 +228,10 @@ let rec type_of_expr env expr =
       failwith "Not is a unary operator")
   | UnOp (op, expr) ->
     let expr_typ = type_of_expr env expr in
+    reject_struct_value "unary operator" expr_typ;
     (match op with
-    | Neg -> expr_typ
-    | NotBit -> expr_typ
+    | Neg -> mod_base expr_typ
+    | NotBit -> mod_base expr_typ
     | Not -> TypBool)
   | Call (func_expr, args) ->
     (* Type check all arguments *)
@@ -121,22 +245,28 @@ let rec type_of_expr env expr =
             name (List.length params) (List.length args));
         List.iter2 (fun param arg ->
           let arg_typ = type_of_expr env arg in
-          let compatible = param.typ = arg_typ ||
-            (param.typ = TypU16 && arg_typ = TypU8) in
-          if not compatible then
+          if contains_struct param.typ || contains_struct arg_typ then
+            failwith (Printf.sprintf "struct argument `%s` of function `%s` is not supported (pass fields)"
+              param.name name);
+          if not (assign_compat param.typ arg_typ) then
             failwith (Printf.sprintf "Type mismatch for argument %s of function %s"
               param.name name)
         ) params args;
         (match return_typ with
         | Some typ -> typ
         | None -> TypVoid)
-      | None -> TypVoid)
+      | None ->
+        (* Unreachable for defined functions: signatures are
+           pre-collected whole-program (proposal 9), so anything left
+           is a typo — fail here instead of at assembly time. *)
+        failwith (Printf.sprintf "undefined function `%s`" name))
     | Field _ -> TypVoid
     | _ -> failwith "Invalid function call")
   | Index (arr, index) ->
     let arr_typ = type_of_expr env arr in
     let index_typ = type_of_expr env index in
-    (match index_typ with
+    (* A mod index is already in range — always a safe index. *)
+    (match mod_base index_typ with
     | TypU8 | TypU16 -> ()
     | _ -> failwith "Array index must be u8 or u16");
     (match arr_typ with
@@ -144,21 +274,57 @@ let rec type_of_expr env expr =
     | TypPointer elem_typ -> elem_typ
     | _ -> failwith "Cannot index non-array type")
   | Field (expr, field) ->
+    (* Whole struct values never reach here as anything but a field
+       base — anything else holding one is rejected below. *)
+    let struct_field_of sname =
+      match lookup_struct_field env sname field with
+      | Some t -> t
+      | None -> failwith (Printf.sprintf "`%s` has no field `%s`" sname field)
+    in
     (match expr with
     | Ident base ->
-      (match lookup_device_port env base field with
-      | Some typ -> typ
-      | None ->
-        (match lookup_group_field env base field with
+      (match lookup_var env base with
+      | Some (TypStruct sname) -> struct_field_of sname
+      | _ ->
+        (match lookup_device_port env base field with
         | Some typ -> typ
         | None ->
+          (match lookup_group_field env base field with
+          | Some typ -> typ
+          | None ->
+            let expr_typ = type_of_expr env expr in
+            reject_struct_value "field base" expr_typ;
+            (match expr_typ with
+            | TypU16 -> TypU16
+            | TypVoid -> TypU8
+            | _ -> TypU8))))
+    | Index (arr, index) ->
+      (match arr with
+      | Ident aname ->
+        (match lookup_var env aname with
+        | Some (TypArray (TypStruct sname, _)) ->
+          let index_typ = type_of_expr env index in
+          (match mod_base index_typ with
+          | TypU8 | TypU16 -> ()
+          | _ -> failwith "Array index must be u8 or u16");
+          struct_field_of sname
+        | _ ->
           let expr_typ = type_of_expr env expr in
+          reject_struct_value "field base" expr_typ;
           (match expr_typ with
           | TypU16 -> TypU16
           | TypVoid -> TypU8
-          | _ -> TypU8)))
+          | _ -> TypU8))
+      | _ ->
+        let expr_typ = type_of_expr env expr in
+        reject_struct_value "field base" expr_typ;
+        (match expr_typ with
+        | TypU16 -> TypU16
+        | TypVoid -> TypU8
+        | _ -> TypU8))
     | _ ->
       let expr_typ = type_of_expr env expr in
+      reject_struct_value "field base" expr_typ;
       (match expr_typ with
       | TypU16 -> TypU16
       | TypVoid -> TypU8
@@ -166,10 +332,18 @@ let rec type_of_expr env expr =
   | AddrOf _ -> TypU16
   | RawLit _ -> TypU16
   | Assign (left, right) ->
+    (match left with
+    | Ident n ->
+      (match resolve_const env n with
+      | Some true ->
+        failwith (Printf.sprintf "cannot assign to constant `%s`" n)
+      | _ -> ())
+    | _ -> ());
     let left_typ = type_of_expr env left in
     let right_typ = type_of_expr env right in
-    if right_typ = TypVoid || left_typ = right_typ ||
-       (left_typ = TypU16 && right_typ = TypU8) ||
+    if contains_struct left_typ || contains_struct right_typ then
+      failwith "cannot assign whole structs (assign field by field)";
+    if right_typ = TypVoid || assign_compat left_typ right_typ ||
        (match left with Field _ -> true | _ -> false) then
       left_typ
     else
@@ -180,15 +354,17 @@ let rec type_of_expr env expr =
 let rec type_check_stmt env stmt =
   match stmt with
   | ExprStmt expr ->
-    ignore (type_of_expr env expr)
+    reject_struct_value "expression statement" (type_of_expr env expr)
   | Return expr ->
     (match expr with
-    | Some expr -> ignore (type_of_expr env expr)
+    | Some expr ->
+      reject_struct_value "return value" (type_of_expr env expr)
     | None -> ())
   | BrkStmt -> ()
   | Goto _ -> ()
   | Label _ -> ()
-  | RPush expr -> ignore (type_of_expr env expr)
+  | RPush expr ->
+    reject_struct_value "rpush" (type_of_expr env expr)
   | RPop -> ()
   | RPeek -> ()
   | RawStmt _ -> ()
@@ -216,35 +392,64 @@ let rec type_check_stmt env stmt =
   | For (var_name, start_expr, end_expr, body) ->
     let start_typ = type_of_expr env start_expr in
     let end_typ = type_of_expr env end_expr in
-    (match start_typ with TypU8 | TypU16 -> () | _ -> failwith "For loop start must be u8 or u16");
-    (match end_typ with TypU8 | TypU16 -> () | _ -> failwith "For loop end must be u8 or u16");
+    (match mod_base start_typ with TypU8 | TypU16 -> () | _ -> failwith "For loop start must be u8 or u16");
+    (match mod_base end_typ with TypU8 | TypU16 -> () | _ -> failwith "For loop end must be u8 or u16");
     let body_env = create_env (Some env) in
     add_var body_env var_name TypU16;
     List.iter (type_check_stmt body_env) body
   | Block stmts ->
     let block_env = create_env (Some env) in
     List.iter (type_check_stmt block_env) stmts
+  | Match _ ->
+    failwith "internal error: unexpanded match reached the type checker"
   | VarDecl (name, typ, init) ->
+    validate_type env (Printf.sprintf "variable `%s`" name) typ;
     (match init with
     | Some expr ->
       let init_typ = type_of_expr env expr in
-      (* Allow implicit widening from u8 to u16 *)
-      let compatible = typ = init_typ ||
-        (typ = TypU16 && init_typ = TypU8) in
-      if not compatible then
+      if contains_struct typ || contains_struct init_typ then
+        failwith (Printf.sprintf "cannot initialize `%s` with a whole struct (declare bare, then assign fields)" name);
+      if not (assign_compat typ init_typ) then
         failwith (Printf.sprintf "Type mismatch in variable declaration for %s" name)
     | None -> ());
     add_var env name typ
-  | ConstDecl (name, expr) ->
+  | InferDecl _ ->
+    failwith "internal error: unelaborated `:=` reached the type checker"
+  | ConstDecl (name, typopt, expr) ->
     let expr_typ = type_of_expr env expr in
-    add_var env name expr_typ
+    if contains_struct expr_typ then
+      failwith (Printf.sprintf "constant `%s` cannot hold a whole struct" name);
+    let t =
+      match typopt with
+      | Some t ->
+        validate_type env (Printf.sprintf "constant `%s`" name) t;
+        if contains_struct t then
+          failwith (Printf.sprintf "constant `%s` cannot be struct-typed" name);
+        if assign_compat t expr_typ then t
+        else failwith (Printf.sprintf "Type mismatch in constant declaration for %s" name)
+      | None ->
+        (match expr_typ with
+        | TypVoid ->
+          failwith (Printf.sprintf "cannot infer type of constant `%s`: void initializer" name)
+        | t -> t)
+    in
+    add_var env name t;
+    add_const env name
 
 let type_check_func env (func: func) =
   let func_env = create_env (Some env) in
   List.iter (fun (p: param) ->
+    validate_type env (Printf.sprintf "parameter `%s` of `%s`" p.name func.name) p.typ;
+    if contains_struct p.typ then
+      failwith (Printf.sprintf "struct parameter `%s` of `%s` is not supported (pass fields)" p.name func.name);
     add_var func_env p.name p.typ
   ) func.params;
-  add_func env func.name func.params func.return_typ;
+  (match func.return_typ with
+  | Some t ->
+    validate_type env (Printf.sprintf "return type of `%s`" func.name) t;
+    if contains_struct t then
+      failwith (Printf.sprintf "struct return type of `%s` is not supported" func.name)
+  | None -> ());
   List.iter (type_check_stmt func_env) func.body
 
 let typ_of_size size =
@@ -254,38 +459,115 @@ let type_check_program program =
   let global_env = create_env None in
   (* Add built-in functions *)
   add_func global_env "print" [{ name = "msg"; typ = TypPointer TypU8 }] None;
+  (* Proposal 9: collect every function signature before checking any
+     body, so calls are arity- and type-checked order-independently.
+     This deliberately does not enable recursion — locals stay static
+     (see limitations); it only makes call checking complete. *)
+  List.iter (function
+    | FuncDecl f -> add_func global_env f.name f.params f.return_typ
+    | _ -> ()) program;
   List.iter (fun decl ->
     match decl with
     | FuncDecl func -> type_check_func global_env func
     | MacroDecl _ -> ()
     | ImportDecl _ -> ()
     | GlobalVarDecl (name, typ, init) ->
+      validate_type global_env (Printf.sprintf "global `%s`" name) typ;
       (match init with
       | Some expr ->
         let init_typ = type_of_expr global_env expr in
-        if typ <> init_typ && not (typ = TypU16 && init_typ = TypU8) then
+        if contains_struct typ || contains_struct init_typ then
+          failwith (Printf.sprintf "cannot initialize `%s` with a whole struct (declare bare, then assign fields)" name);
+        if not (assign_compat typ init_typ) then
           failwith (Printf.sprintf "Type mismatch in global variable declaration for %s" name)
       | None -> ());
       add_var global_env name typ
-    | GlobalConstDecl (name, expr) ->
+    | GlobalInferDecl _ ->
+      failwith "internal error: unelaborated global `:=` reached the type checker"
+    | GlobalConstDecl (name, typopt, expr) ->
       let expr_typ = type_of_expr global_env expr in
-      add_var global_env name expr_typ
+      if contains_struct expr_typ then
+        failwith (Printf.sprintf "constant `%s` cannot hold a whole struct" name);
+      let t =
+        match typopt with
+        | Some t ->
+          validate_type global_env (Printf.sprintf "constant `%s`" name) t;
+          if contains_struct t then
+            failwith (Printf.sprintf "constant `%s` cannot be struct-typed" name);
+          if assign_compat t expr_typ then t
+          else failwith (Printf.sprintf "Type mismatch in global constant declaration for %s" name)
+        | None ->
+          (match expr_typ with
+          | TypVoid ->
+            failwith (Printf.sprintf "cannot infer type of global constant `%s`: void initializer" name)
+          | t -> t)
+      in
+      add_var global_env name t;
+      add_const global_env name
     | DeviceDecl device ->
       let ports = List.map (fun p -> (p.port_name, typ_of_size p.port_size)) device.ports in
       let full_ports = ("vector", TypU16) :: ports in
       add_device global_env device.device_name full_ports
     | GroupDecl g ->
+      let reject_mod w t =
+        match t with
+        | TypMod _ ->
+          failwith (Printf.sprintf "mod type not supported for %s (v1: mod lives on variables only)" w)
+        | _ -> ()
+      in
+      let reject_struct w t =
+        match t with
+        | TypStruct _ ->
+          failwith (Printf.sprintf "struct types not supported for %s (v1: groups hold scalars; use a named struct instead)" w)
+        | _ -> ()
+      in
+      reject_mod (Printf.sprintf "group `%s` base" g.group_name) g.base_typ;
+      reject_struct (Printf.sprintf "group `%s` base" g.group_name) g.base_typ;
+      List.iter (fun (fname, ftyp) ->
+        reject_mod (Printf.sprintf "field `%s.%s`" g.group_name fname) ftyp;
+        reject_struct (Printf.sprintf "field `%s.%s`" g.group_name fname) ftyp
+      ) g.fields;
       let base_size = g.base_typ in
       add_var global_env g.group_name base_size;
       let fields = List.map (fun (fname, ftyp) -> (fname, ftyp)) g.fields in
       add_group global_env g.group_name fields
     | DataDecl _ -> ()
     | AssetDecl _ -> ()
+    | MetaDecl (title, author) ->
+      let check field v =
+        if v = "" then
+          failwith (Printf.sprintf "meta `%s` must not be empty" field);
+        if String.contains v '\x00' then
+          failwith (Printf.sprintf "meta `%s` must not contain NUL" field)
+      in
+      check "title" title;
+      check "author" author
     | BufferDecl b ->
       (match b.buf_elem with
       | TypU8 | TypU16 | TypBool -> ()
+      | TypMod _ ->
+        failwith (Printf.sprintf "buffer `%s` cannot hold mod-typed elements (v1: mod lives on variables only)" b.buf_name)
+      | TypStruct n ->
+        (match lookup_struct global_env n with
+        | Some _ -> ()
+        | None -> failwith (Printf.sprintf "buffer `%s`: unknown type `%s`" b.buf_name n))
       | _ -> failwith (Printf.sprintf "buffer `%s` must hold u8/u16/bool" b.buf_name));
       add_var global_env b.buf_name (TypArray (b.buf_elem, b.buf_len))
+    | StructDecl s ->
+      (* v1 fields are scalar u8/u16/bool: offsets are plain sizes and
+         every store stays a sized STZ. Anything richer is a clear
+         error, not a silent miscompile. *)
+      List.iter (fun (fname, ftyp) ->
+        match ftyp with
+        | TypU8 | TypU16 | TypBool -> ()
+        | TypMod _ ->
+          failwith (Printf.sprintf "struct `%s` field `%s`: mod-typed fields are not supported (v1)" s.struct_name fname)
+        | TypStruct _ ->
+          failwith (Printf.sprintf "struct `%s` field `%s`: nested structs are not supported (v1)" s.struct_name fname)
+        | _ ->
+          failwith (Printf.sprintf "struct `%s` field `%s`: only u8/u16/bool fields (v1)" s.struct_name fname)
+      ) s.struct_fields;
+      add_struct global_env s.struct_name s.struct_fields
     | RawDecl _ -> ()
   ) program;
   global_env

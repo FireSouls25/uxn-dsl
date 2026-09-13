@@ -7,6 +7,14 @@ type typ =
   | TypVoid
   | TypArray of typ * int
   | TypPointer of typ
+  (* Modular integer: base value always in [0, m). The bound lives with
+     the variable; stores wrap automatically. Modulus is a compile-time
+     constant fitting the base (u8: 1..256, u16: 1..65535). *)
+  | TypMod of typ * int
+  (* Named struct value (proposal 4 v1): whole values never touch the
+     stack — only `.field` access compiles. Sizes come from the
+     declaration (checked before use). *)
+  | TypStruct of string
 
 type binop =
   | Add | Sub | Mul | Div | Mod
@@ -40,7 +48,10 @@ type stmt =
   | For of string * expr * expr * stmt list
   | Block of stmt list
   | VarDecl of string * typ * expr option
-  | ConstDecl of string * expr
+  (* `name := expr`: mutable, type inferred by the elaborator which
+     rewrites it to VarDecl before checking/codegen. *)
+  | InferDecl of string * expr
+  | ConstDecl of string * typ option * expr
   | RawStmt of string  (* Raw Uxntal statement *)
   | BrkStmt
   | Goto of string
@@ -48,6 +59,15 @@ type stmt =
   | RPush of expr
   | RPop
   | RPeek
+  (* `match` scrutinee { pat => body }: lowered by the expander to a
+     freshened-temp + if/elif chain (proposal 3 v1), so the checker and
+     generator never see it. Patterns are integer literals; a single
+     trailing `_` is the default. *)
+  | Match of expr * (match_pat * stmt list) list
+
+and match_pat =
+  | MInt of int
+  | MDefault
 
 type param = {
   name: string;
@@ -116,12 +136,28 @@ type buffer_decl = {
   buf_elem: typ;
 }
 
+(* A named struct (proposal 4 v1): field offsets are computed from
+   field types at declaration time. Structs live in buffers (arrays
+   of rows) and plain variables (single rows, zero-page slots);
+   only `.field` access compiles — whole values never touch the
+   stack. v1 fields are scalar u8/u16/bool. *)
+type struct_decl = {
+  struct_name: string;
+  struct_fields: (string * typ) list;
+}
+
+(* ROM metadata: title + author lines per the Varvara System/metadata
+   convention. Top-level only, at most once per program (the loader
+   rejects duplicates like any other redefinition). *)
 type decl =
   | FuncDecl of func
   | MacroDecl of macro_decl
   | ImportDecl of import
   | GlobalVarDecl of string * typ * expr option
-  | GlobalConstDecl of string * expr
+  | GlobalInferDecl of string * expr
+  | GlobalConstDecl of string * typ option * expr
+  | MetaDecl of string * string
+  | StructDecl of struct_decl
   | DeviceDecl of device_decl
   | GroupDecl of group_decl
   | DataDecl of data_decl

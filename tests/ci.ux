@@ -1,9 +1,18 @@
 ( committed CI fixture: exercises imports, macros, functions,
-  buffers, loops and print through `etal -t`; output is diffed
+  buffers, loops, print, inferred/constant declarations, modular
+  wraparound and ROM metadata through `etal -t`; output is diffed
   against ci_expected.tal by `dune runtest` )
 import "ci_lib.ux"
 
+meta { title: "ci", author: "etal" }
+
 buffer cells[8]: u16;
+
+grid_pos: u16 mod 16 = 15;
+
+Pt :: struct { x: u8; y: u8; };
+
+buffer pts[2]: Pt;
 
 main :: fn() {
     m: u16 = mod16(17, 5);
@@ -17,6 +26,38 @@ main :: fn() {
     while total > 30 {
         total = total - 1;
     }
+    step := 3;
+    grid_pos = grid_pos + step;
+    grid_pos = grid_pos - 20;
+    w: u16 mod 8 = 7;
+    w += 3;
+    K :: 4;
+    CAP : u16 : 10;
+    pts[0].x = 3;
+    pts[1].y = 4;
+    ok: u8 = 0;
+    if w <= 2 {
+        ok = 1;
+    }
+    if w >= 2 {
+        ok = ok + 2;
+    }
+    ng: u8 = 3;
+    match m {
+        0 => { varvara.console.write(65); }
+        2 => { varvara.console.write(66); }
+        _ => { varvara.console.write(67); }
+    }
     print("ci-ok\n");
     varvara.console.write(48 + m);
+    varvara.console.write(48 + grid_pos);
+    varvara.console.write(48 + w);
+    varvara.console.write(48 + pts[0].x + pts[1].y);
+    varvara.console.write(48 + late(1));
+    varvara.console.write(48 + ok);
+    varvara.console.write(48 + -ng);
+}
+
+late :: fn(x: u16) -> u16 {
+    return x + 1;
 }

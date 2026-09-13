@@ -1,0 +1,46 @@
+( lib/menu.ux — button-edge polls + selection index over
+  game-drawn items. Items themselves are game content (objects or
+  direct draws); this module is the input/state half. Act on edge
+  bits with masks, never equality, so combined presses keep working:
+      pressed: u8 = menu_poll(Controller.button);
+      if pressed & 16 != 0 { menu_prev(); }
+  Selection wraps over menu_n items (set with menu_items, >= 1). )
+
+menu_last: u8 = 0;
+menu_sel: u8 = 0;
+menu_n: u8 = 1;
+
+( Bits pressed since the last poll (edge, not hold). Call once per
+  frame with Controller.button. )
+menu_poll :: fn(cur: u8) -> u8 {
+    pressed: u8 = cur & (menu_last ^ 255);
+    menu_last = cur;
+    return pressed;
+}
+
+( Point selection at n items (clamped to >= 1). )
+menu_items :: fn(n: u8) {
+    if n == 0 {
+        menu_n = 1;
+    } else {
+        menu_n = n;
+    }
+    if menu_sel >= menu_n {
+        menu_sel = 0;
+    }
+}
+
+menu_next :: fn() {
+    menu_sel = menu_sel + 1;
+    if menu_sel >= menu_n {
+        menu_sel = 0;
+    }
+}
+
+menu_prev :: fn() {
+    if menu_sel == 0 {
+        menu_sel = menu_n - 1;
+    } else {
+        menu_sel = menu_sel - 1;
+    }
+}

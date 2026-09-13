@@ -10,18 +10,51 @@ open Printf
 
 let name = "native"
 
-(* Per-OS VM rows. Today only the host row exists; macOS/Windows rows
-   plug in here without touching the driver (see vendor/BUILD.md).
-   Lookup keeps legacy fallbacks so older checkouts keep working. *)
+(* Host platform row: matches the vendor/ layout (see vendor/BUILD.md).
+   Detected once via uname(1); Windows takes its row without asking.
+   Unknown unixes fall back to the Linux row (today's behavior). *)
+let host_row : string Lazy.t = lazy (
+  match Sys.os_type with
+  | "Win32" | "Cygwin" -> "windows-x86_64"
+  | _ ->
+    let uname arg =
+      try
+        let ic = Unix.open_process_in ("uname " ^ arg) in
+        let s = try input_line ic with End_of_file -> "" in
+        ignore (Unix.close_process_in ic);
+        String.trim s
+      with _ -> ""
+    in
+    (match uname "-s", uname "-m" with
+    | "Darwin", ("arm64" | "aarch64") -> "macos-arm64"
+    | "Darwin", _ -> "macos-x86_64"
+    | ("Linux", ("aarch64" | "arm64")) -> "linux-aarch64"
+    | _ -> "linux-x86_64")
+)
+
+(* Per-OS VM rows. The host row comes first; the Linux row stays as a
+   legacy fallback (plus resolve_tool's checkout fallbacks), so older
+   layouts keep working. A missing host row fails with the expected
+   path instead of a cryptic exec error. *)
 let default_uxn2_path () =
-  let candidates =
+  let row = Lazy.force host_row in
+  let in_row r =
     List.map
-      (fun v -> Filename.concat (Filename.concat v "linux-x86_64") "uxn2")
+      (fun v -> Filename.concat (Filename.concat v r) "uxn2")
       (Target.vendor_candidates ())
+  in
+  let candidates =
+    in_row row
+    @ (if row = "linux-x86_64" then [] else in_row "linux-x86_64")
     @ [Target.resolve_tool "uxn2"]
   in
   let rec find = function
-    | [] -> Target.resolve_tool "uxn2"
+    | [] ->
+      if row = "linux-x86_64" then Target.resolve_tool "uxn2"
+      else
+        failwith (Printf.sprintf
+          "no vendored uxn2 for this host (want vendor/%s/uxn2 next to etal; see vendor/BUILD.md)"
+          row)
     | p :: ps -> if Sys.file_exists p then p else find ps
   in
   find candidates
