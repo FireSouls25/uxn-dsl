@@ -90,18 +90,28 @@ jobs:
           echo "expected lines: $(wc -l < tests/ci_expected.tal) / actual lines: $(wc -l < ci.actual.tal)"
           diff -u tests/ci_expected.tal ci.actual.tal && echo GOLDEN-OK
 
+      - name: Stage validated etal binary (tags only)
+        # Flatten first: upload-artifact v4+ preserves the build/*/
+        # layout inside artifacts (so pkg/ would nest as
+        # pkg/<platform>/etal and break staging). One of the two
+        # copies below matches per runner; the other is absent.
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          rm -rf stage && mkdir stage
+          cp build/*/etal stage/ 2>/dev/null || true
+          cp build/*/etal.exe stage/ 2>/dev/null || true
+          ls stage/
+
       - name: Upload validated etal binary (tags only)
         # The package-release job consumes this instead of rebuilding: same
         # bytes CI validated, no second toolchain provisioning.
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v5
         with:
-          # One of build/*/etal (unix) or build/*/etal.exe (windows)
-          # matches per runner; the other pattern is simply absent.
+          # Flat: stage/ holds just the binary, so the artifact root
+          # is pkg/etal[.exe] after download (see staging above).
           name: etal-${{ matrix.name }}
-          path: |
-            build/*/etal
-            build/*/etal.exe
+          path: stage/
           if-no-files-found: error
           retention-days: 7
 
