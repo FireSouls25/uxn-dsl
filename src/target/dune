@@ -4,4 +4,5 @@
  (name etal_target)
  (package etal)
  (wrapped false)
- (modules target target_native target_web))
+ (modules target target_native target_web)
+ (libraries unix))

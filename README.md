@@ -27,7 +27,8 @@ and Rekka Bellum) and the Uxn community:
 
 - OCaml 5.5.0, opam 2.5.2, dune 3.24.2.
 - For assembling/running: nothing extra on Linux — the VM and assembler are vendored.
-- This project comes with vendored versions of uxn for Windows, Linux and MacOS.
+- Vendored VM rows: `linux-x86_64` and `macos-arm64` (macOS needs its
+  SDL2 runtime fixed first — see `vendor/BUILD.md`); Windows is still TODO.
 - For the web target: a normal browser.
 
 ## Building the compiler
