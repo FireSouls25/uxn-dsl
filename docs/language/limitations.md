@@ -14,7 +14,10 @@ not are marked **footgun**.
   end leaves whatever is on the stack; callers read the declared
   width, so an omitted return is garbage, not zero — **footgun**.
 - **256-byte zero-page budget**, shared by globals, groups and all
-  spilled locals. Overflow is a compile error naming the byte count.
+  spilled locals. Only functions reachable from `main` budget slots
+  (dead-function elimination runs after checking, so unused code
+  must still type-check). Overflow is a compile error naming the
+  byte count.
 - **Buffers live at fixed addresses** from `0x2000` upward and must
   fit below 64K. There is no allocator and no custom layout (no `|addr`
   control).

@@ -49,4 +49,7 @@ clear, theme, emulator-decoded mode bits), `object.ux` + `anim.ux`
 cell + AABB hits), `scene.ux` + `menu.ux` (id + wipes, edge polls +
 wraparound select), plus an `objdemo` game playing them together.
 Lib rule: device-touching helpers are macros (checked at call sites,
-so imports never force devices).
+so imports never force devices). Software 3D: `trig.ux`
+(self-built turns256 sine table) and `gfx3d.ux` (rotate/project/DDA
+wireframe) with a spinning-cube demo. Dead-function elimination
+(reachable-from-main, raw disables) so libraries don't eat zero-page.

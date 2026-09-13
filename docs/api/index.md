@@ -51,6 +51,8 @@ bindings, then function locals/params, then globals, in splice order.
 | `main ::` | entry convention | convention | [builtins](builtins.md#main) |
 | `x16_*` | fns + consts (8.8 fixed point) | `lib/fix16.ux` | [stdlib](stdlib.md#fix16ux) |
 | `u32_*` | fns (32-bit predicates) | `lib/u32.ux` | [stdlib](stdlib.md#u32ux) |
+| `sin256`, `cos256`, `trig_init` | fns (turns256 trig) | `lib/trig.ux` | [stdlib](stdlib.md#trigux) |
+| `vset`, `frame_begin`, `rot_y/x`, `project`, `plot`, `edge` | fns + macro (3D wireframe) | `lib/gfx3d.ux` | [stdlib](stdlib.md#gfx3dux) |
 | `screen_size`, `blit`, `clear`, `theme`, `SPRITE_*`, `PIXEL_*` | macros/consts (screen) | `lib/screen.ux` | [stdlib](stdlib.md#screenux) |
 | `obj_spawn/move/hide/draw`, `draw_all`, `OBJ_*` | fns/macros (objects) | `lib/object.ux` | [stdlib](stdlib.md#objectux-animux) |
 | `anim_play/step` | fns (animation) | `lib/anim.ux` | [stdlib](stdlib.md#objectux-animux) |

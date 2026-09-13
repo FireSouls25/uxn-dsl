@@ -1,0 +1,37 @@
+( trig harness: quarter-table spots plus sin/cos at 8 angles.
+  Each u16 prints as hi,lo bytes. Expected console bytes:
+  00 00 00 62 00 b5 00 ec 01 01 00 00 01 01 00 b5
+  00 b5 01 01 00 00 00 b5 ff 4b 00 00 fe ff ff 4b
+  ff 4b fe ff 00 00 ff 4b 00 b5
+  (table[0,16,32,48,64], then sin+cos at 0,32,...,224) )
+import "trig.ux"
+
+emit16 :: fn(v: u16) {
+    varvara.console.write((v >> 8) & 255);
+    varvara.console.write(v & 255);
+}
+
+main :: fn() {
+    trig_init();
+    emit16(sin_tab[0]);
+    emit16(sin_tab[16]);
+    emit16(sin_tab[32]);
+    emit16(sin_tab[48]);
+    emit16(sin_tab[64]);
+    emit16(sin256(0));
+    emit16(cos256(0));
+    emit16(sin256(32));
+    emit16(cos256(32));
+    emit16(sin256(64));
+    emit16(cos256(64));
+    emit16(sin256(96));
+    emit16(cos256(96));
+    emit16(sin256(128));
+    emit16(cos256(128));
+    emit16(sin256(160));
+    emit16(cos256(160));
+    emit16(sin256(192));
+    emit16(cos256(192));
+    emit16(sin256(224));
+    emit16(cos256(224));
+}

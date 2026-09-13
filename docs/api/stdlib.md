@@ -91,3 +91,27 @@ hi: u16 = ahi + bhi + carry;
 Multi-result returns (out-params or tuple returns) would obsolete
 this pattern; until then the predicates plus three-line call sites
 cover scores, timers and RNG state.
+
+## trig.ux
+
+Turns256 sine/cosine over a self-built table: angles are `u8`
+turns (0–255 = full circle), values fix16. `trig_init()` builds a
+65-entry quarter table at boot with 3-term Taylor (worst error
+±1 LSB, verified against a bit-exact model), quadrants mirror it,
+so `cos256(a)` is `sin256(a+64)` — free via `u8` wraparound. No
+bulk literals, no new syntax: the table generates itself from
+`fix16.ux`. `sin256`/`cos256`, `taylor_sin` (exposed for testing).
+
+## gfx3d.ux
+
+Software 3D wireframe (Varvara has no 3D): model units are pixels
+as fix16, projection is the standard pinhole (`s = dist/(z+dist)`).
+`Vec3` model/work buffers plus `Proj` output (`vset`,
+`frame_begin` — rotation is destructive, so re-scratch every
+frame), `rot_y`/`rot_x` (fix16, in place), `project(dist, cx, cy)`,
+`plot` (macro: 600 pixels/frame cost no `JSR2` each), `edge`
+(DDA: one fix16 divide up front, adds per pixel, both endpoints
+plotted). Keep the model in front of the camera: `dist` must
+exceed the largest rotated radius AND `dist + radius` must stay
+under 128 (fix16 signed range) — a ±32px cube wants `dist` around
+72. The `examples/cube3d/` demo spins all of this at 60Hz.
