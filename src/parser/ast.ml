@@ -7,6 +7,10 @@ type typ =
   | TypVoid
   | TypArray of typ * int
   | TypPointer of typ
+  (* Modular integer: base value always in [0, m). The bound lives with
+     the variable; stores wrap automatically. Modulus is a compile-time
+     constant fitting the base (u8: 1..256, u16: 1..65535). *)
+  | TypMod of typ * int
 
 type binop =
   | Add | Sub | Mul | Div | Mod
@@ -40,7 +44,10 @@ type stmt =
   | For of string * expr * expr * stmt list
   | Block of stmt list
   | VarDecl of string * typ * expr option
-  | ConstDecl of string * expr
+  (* `name := expr`: mutable, type inferred by the elaborator which
+     rewrites it to VarDecl before checking/codegen. *)
+  | InferDecl of string * expr
+  | ConstDecl of string * typ option * expr
   | RawStmt of string  (* Raw Uxntal statement *)
   | BrkStmt
   | Goto of string
@@ -121,7 +128,8 @@ type decl =
   | MacroDecl of macro_decl
   | ImportDecl of import
   | GlobalVarDecl of string * typ * expr option
-  | GlobalConstDecl of string * expr
+  | GlobalInferDecl of string * expr
+  | GlobalConstDecl of string * typ option * expr
   | DeviceDecl of device_decl
   | GroupDecl of group_decl
   | DataDecl of data_decl

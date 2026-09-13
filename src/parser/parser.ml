@@ -43,21 +43,39 @@ let expect_int parser =
   | t -> failwith (Printf.sprintf "Expected integer, got %s" (token_to_string t))
 
 let rec parse_typ parser =
-  match peek parser with
-  | U8 -> ignore (advance parser); TypU8
-  | U16 -> ignore (advance parser); TypU16
-  | BOOL -> ignore (advance parser); TypBool
-  | LBRACKET ->
+  let base =
+    match peek parser with
+    | U8 -> ignore (advance parser); TypU8
+    | U16 -> ignore (advance parser); TypU16
+    | BOOL -> ignore (advance parser); TypBool
+    | LBRACKET ->
+      ignore (advance parser);
+      let size = expect_int parser in
+      expect parser RBRACKET;
+      let elem_typ = parse_typ parser in
+      TypArray (elem_typ, size)
+    | AMPERSAND ->
+      ignore (advance parser);
+      let elem_typ = parse_typ parser in
+      TypPointer elem_typ
+    | t -> failwith (Printf.sprintf "Expected type, got %s" (token_to_string t))
+  in
+  (* Modular integer suffix: `u16 mod 16`. The modulus must be a
+     positive literal fitting the base (u8: 1..256, u16: 1..65535);
+     m = 256 on a u8 base is the identity (every byte is in range). *)
+  (match peek parser with
+  | MOD ->
     ignore (advance parser);
-    let size = expect_int parser in
-    expect parser RBRACKET;
-    let elem_typ = parse_typ parser in
-    TypArray (elem_typ, size)
-  | AMPERSAND ->
-    ignore (advance parser);
-    let elem_typ = parse_typ parser in
-    TypPointer elem_typ
-  | t -> failwith (Printf.sprintf "Expected type, got %s" (token_to_string t))
+    (match base with
+    | TypU8 | TypU16 ->
+      let m = expect_int parser in
+      let max_m = match base with TypU8 -> 256 | _ -> 65535 in
+      if m < 1 || m > max_m then
+        failwith (Printf.sprintf "modulus %d out of range for %s (want 1..%d)"
+          m (token_to_string (if base = TypU8 then U8 else U16)) max_m);
+      TypMod (base, m)
+    | _ -> failwith "mod applies to u8/u16 only")
+  | _ -> base)
 
 and parse_primary parser =
   match peek parser with
@@ -391,15 +409,47 @@ and parse_stmt parser =
       | Ident id ->
         ignore (advance parser);
         let typ = parse_typ parser in
-        let init =
-          match peek parser with
-          | ASSIGN ->
-            ignore (advance parser);
-            Some (parse_expr parser)
-          | _ -> None
-        in
+        (match peek parser with
+        | ASSIGN ->
+          ignore (advance parser);
+          let init = Some (parse_expr parser) in
+          expect parser SEMICOLON;
+          VarDecl (id, typ, init)
+        | COLON ->
+          (* `name : type : value`: explicit-type constant. *)
+          ignore (advance parser);
+          let value = parse_expr parser in
+          expect parser SEMICOLON;
+          ConstDecl (id, Some typ, value)
+        | _ ->
+          expect parser SEMICOLON;
+          VarDecl (id, typ, None))
+      | _ ->
+        parser.pos <- saved_pos;
+        let expr = parse_expr parser in
         expect parser SEMICOLON;
-        VarDecl (id, typ, init)
+        ExprStmt expr)
+    | COLON_ASSIGN ->
+      (* `name := value`: inferred-type mutable. *)
+      (match !left with
+      | Ident id ->
+        ignore (advance parser);
+        let value = parse_expr parser in
+        expect parser SEMICOLON;
+        InferDecl (id, value)
+      | _ ->
+        parser.pos <- saved_pos;
+        let expr = parse_expr parser in
+        expect parser SEMICOLON;
+        ExprStmt expr)
+    | DOUBLE_COLON ->
+      (* `name :: value`: inferred-type constant. *)
+      (match !left with
+      | Ident id ->
+        ignore (advance parser);
+        let value = parse_expr parser in
+        expect parser SEMICOLON;
+        ConstDecl (id, None, value)
       | _ ->
         parser.pos <- saved_pos;
         let expr = parse_expr parser in
@@ -655,19 +705,30 @@ let parse_decl parser =
       | _ ->
         let value = parse_expr parser in
         expect parser SEMICOLON;
-        GlobalConstDecl (name, value))
+        GlobalConstDecl (name, None, value))
+    | COLON_ASSIGN ->
+      ignore (advance parser);
+      let value = parse_expr parser in
+      expect parser SEMICOLON;
+      GlobalInferDecl (name, value)
     | COLON ->
       ignore (advance parser);
       let typ = parse_typ parser in
-      let init =
-        match peek parser with
-        | ASSIGN ->
-          ignore (advance parser);
-          Some (parse_expr parser)
-        | _ -> None
-      in
-      expect parser SEMICOLON;
-      GlobalVarDecl (name, typ, init)
+      (match peek parser with
+      | ASSIGN ->
+        ignore (advance parser);
+        let init = Some (parse_expr parser) in
+        expect parser SEMICOLON;
+        GlobalVarDecl (name, typ, init)
+      | COLON ->
+        (* `name : type : value`: explicit-type constant. *)
+        ignore (advance parser);
+        let value = parse_expr parser in
+        expect parser SEMICOLON;
+        GlobalConstDecl (name, Some typ, value)
+      | _ ->
+        expect parser SEMICOLON;
+        GlobalVarDecl (name, typ, None))
     | _ -> failwith (Printf.sprintf "Unexpected token after identifier %s" name))
   | _ -> failwith (Printf.sprintf "Expected declaration, got %s" (token_to_string (peek parser)))
 

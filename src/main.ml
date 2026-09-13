@@ -69,6 +69,9 @@ let () =
       (List.length (Lexer.tokenize source))
   end;
 
+  (* Resolve `:=` inferred declarations into explicit ones *)
+  let program = Elab.elaborate_program program in
+
   (* Type checking *)
   let _env = Types.type_check_program program in
   if !verbose then

@@ -67,7 +67,7 @@ not are marked **footgun**.
 
 ## Surface gaps
 
-- Reserved but unused keywords: `match`, `let`, `const`, `byte`,
+- Reserved but unused keywords: `match`, `let`, `byte`,
   `short`. The `RawLit`, `CompoundLit` and `RawStmt` AST nodes exist
   but no syntax builds them.
 - No string variables or concatenation — only literals, `print`, and

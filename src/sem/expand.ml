@@ -32,7 +32,8 @@ let bound_names body =
   let add n = names := n :: !names in
   let rec stmt = function
     | VarDecl (n, _, _) -> add n
-    | ConstDecl (n, _) -> add n
+    | InferDecl (n, _) -> add n
+    | ConstDecl (n, _, _) -> add n
     | If (_, t, elifs, e) ->
       List.iter stmt t;
       List.iter (fun (_, b) -> List.iter stmt b) elifs;
@@ -88,7 +89,8 @@ let rec subst_stmt psubst rename = function
          List.map (subst_stmt psubst rename) b)
   | Block ss -> Block (List.map (subst_stmt psubst rename) ss)
   | VarDecl (n, t, i) -> VarDecl (rename_var rename n, t, opt_subst psubst rename i)
-  | ConstDecl (n, e) -> ConstDecl (rename_var rename n, subst_expr psubst rename e)
+  | InferDecl (n, e) -> InferDecl (rename_var rename n, subst_expr psubst rename e)
+  | ConstDecl (n, t, e) -> ConstDecl (rename_var rename n, t, subst_expr psubst rename e)
   | Goto n -> Goto (rename_var rename n)
   | Label n -> Label (rename_var rename n)
   | RPush e -> RPush (subst_expr psubst rename e)
@@ -162,7 +164,8 @@ and expand_stmt macros guard = function
     [For (v, expand_expr macros guard s, expand_expr macros guard e, expand_stmts macros guard b)]
   | Block ss -> [Block (expand_stmts macros guard ss)]
   | VarDecl (n, t, i) -> [VarDecl (n, t, opt_expand macros guard i)]
-  | ConstDecl (n, e) -> [ConstDecl (n, expand_expr macros guard e)]
+  | InferDecl (n, e) -> [InferDecl (n, expand_expr macros guard e)]
+  | ConstDecl (n, t, e) -> [ConstDecl (n, t, expand_expr macros guard e)]
   | RPush e -> [RPush (expand_expr macros guard e)]
   | (Goto _ | Label _ | RPop | RPeek | BrkStmt | RawStmt _) as s -> [s]
 
@@ -189,6 +192,7 @@ let expand_program program =
     | MacroDecl _ -> []
     | FuncDecl f -> [FuncDecl { f with body = expand_stmts macros [] f.body }]
     | GlobalVarDecl (n, t, i) -> [GlobalVarDecl (n, t, opt_expand macros [] i)]
-    | GlobalConstDecl (n, e) -> [GlobalConstDecl (n, expand_expr macros [] e)]
+    | GlobalInferDecl (n, e) -> [GlobalInferDecl (n, expand_expr macros [] e)]
+    | GlobalConstDecl (n, t, e) -> [GlobalConstDecl (n, t, expand_expr macros [] e)]
     | d -> [d]
   ) program

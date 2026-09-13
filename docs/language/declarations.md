@@ -50,23 +50,40 @@ addressed as `.pos/x`. The base itself is an ordinary variable of the
 given type. Groups are how Uxntal's `@label &field $n` idiom is
 spelled with types attached; field offsets follow field sizes.
 
-## Globals and constants
+## Variables and constants (Odin-style)
+
+The second symbol decides mutability — there is no `const` keyword:
 
 ```ux
-head_x: u16;            ( zero-page, sequential from $00 )
-head_x: u16 = 0x0303;  ( optional initializer )
-
-width :: 20;            ( constant: address IS the value )
+head_x: u16;            ( explicit type, mutable )
+head_x: u16 = 0x0303;   ( explicit type, mutable, optional initializer )
+tries := 0;             ( inferred type, mutable: u16, from the literal )
+LIMIT : u16 : 20;       ( explicit type, constant )
+WIDTH :: 20;            ( inferred type, constant: address IS the value )
 ```
+
+- `name : type [= init];` — mutable variable (global: zero-page from
+  `$00` in declaration order; local: per-function mangled slot).
+  Global initializers run at startup, before `main` is called.
+- `name := init;` — same, with the type inferred from the initializer
+  (literals by range, identifiers by copy, calls by return type;
+  `void` is rejected). `for`-loop variables stay explicitly `u16`.
+- `name : type : init;` — constant with a checked type: zero-page
+  storage initialized once, and any assignment to it is a compile
+  error. Reads like a variable.
+- `name :: init;` — constant without storage: a label placed at its
+  own value (`|0014 @WIDTH`), so referencing it pushes the value at
+  zero cost. Only integer and identifier initializers carry real
+  values this way.
+
+Convention (not enforced): `::` constants are `ALL_CAPS`, like the
+`WIDTH` above; variables are `snake_case`. Locals use the same four
+forms inside functions.
+
+## Globals and layout
 
 Globals reserve zero-page bytes in declaration order; the compiler
 budgets all 256 bytes and fails past the limit instead of overlapping.
-Constants are labels placed at their own value (`|0014 @width`), so
-referencing one pushes the value — this only carries real values for
-integer and identifier constants.
-
-Locals use the same `name: type [= init];` syntax inside functions,
-but live in per-function mangled slots (see [Uxn mapping](uxn-mapping.md)).
 
 ## Data and assets
 

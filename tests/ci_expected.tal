@@ -1,9 +1,14 @@
 |00
     @double__x $2
+    @grid_pos $2
     @main__m $2
     @main__d $2
     @main__total $2
     @main__i $2
+    @main__step $1
+    @main__w $2
+    @main__K $2
+    @main__CAP $2
 
 %RTN { JMP2r }
 %EMIT { #18 DEO }
@@ -17,6 +22,7 @@
 |000a @ten
 
 |0100
+#000f #0010 DIV2k MUL2 SUB2 .grid_pos STZ2
 ;main JSR2
 HALT
 BRK
@@ -50,8 +56,17 @@ JMP2r
 .main__total LDZ2 #0001 SUB2 .main__total STZ2
  !&while_4
 &while_end_6
+#03 .main__step STZ
+.grid_pos LDZ2 .main__step LDZ #00 SWP ADD2 #0010 DIV2k MUL2 SUB2 .grid_pos STZ2
+.grid_pos LDZ2 #0014 SUB2 #0010 DIV2k MUL2 SUB2 .grid_pos STZ2
+#0007 #0008 DIV2k MUL2 SUB2 .main__w STZ2
+.main__w LDZ2 #0003 ADD2 #0008 DIV2k MUL2 SUB2 .main__w STZ2
+#0004 .main__K STZ2
+#000a .main__CAP STZ2
 ;str_0 &print_7 LDAk .Console/write DEO INC2 LDAk ?&print_7 POP2
 #0030 .main__m LDZ2 ADD2 NIP .Console/write DEO
+#0030 .grid_pos LDZ2 ADD2 NIP .Console/write DEO
+#0030 .main__w LDZ2 ADD2 NIP .Console/write DEO
 JMP2r
 
 

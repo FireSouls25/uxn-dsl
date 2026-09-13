@@ -36,14 +36,18 @@ Identifiers are letters, digits and underscores (must not start with a
 digit). These words are reserved:
 
 ```
-fn event return if elif else while for in match let const
+fn event return if elif else while for in match let mod
 import raw macro buffer device goto data group label
 rpush rpop rpeek brk
 u8 u16 bool byte short
 true false
 ```
 
-`match`, `let`, `const`, `byte` and `short` are reserved for future
-use and cannot be used as names today. (The AST also contains
+`:=` is one token (inferred declaration); `::` is one token
+(inferred constant, or `fn`/`event` after a name). `match`, `let`,
+`byte` and `short` are reserved for future use and cannot be used as
+names today. (`const` is not a keyword at all — constness comes from
+the second `=`/`:` of a declaration — so it reads as a plain
+identifier.) (The AST also contains
 `RawLit`, `CompoundLit` and `RawStmt` nodes, but the parser never
 builds them from surface syntax — they exist for tooling.)

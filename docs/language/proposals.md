@@ -38,6 +38,8 @@ Design constraints that keep it coherent:
   *and* all four directional branches at once.
 
 Status: accepted as scoped above; not scheduled.
+(obsolete — implemented on `dev`: `x: u16 mod N` with stores reduced
+via the `%` lowering; see [types](types.md#modular-integers).)
 
 ## 2. Implicit `brk` in events — half already true; finish it via `return`
 
@@ -191,6 +193,8 @@ works unchanged since expansion precedes checking. Lexer cost is one
 token (`:=` currently lexes as `:` + `=` and fails in the parser, so
 nothing valid changes meaning). *P0–P1*: one token, one AST node,
 type-side resolution, freshening already handles the new binder.
+(obsolete — implemented on `dev` exactly as sketched, as an
+elaborate-then-check pass; see [declarations](declarations.md).)
 
 ---
 

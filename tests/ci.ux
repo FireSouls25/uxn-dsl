@@ -1,9 +1,12 @@
 ( committed CI fixture: exercises imports, macros, functions,
-  buffers, loops and print through `etal -t`; output is diffed
+  buffers, loops, print, inferred/constant declarations and modular
+  wraparound through `etal -t`; output is diffed
   against ci_expected.tal by `dune runtest` )
 import "ci_lib.ux"
 
 buffer cells[8]: u16;
+
+grid_pos: u16 mod 16 = 15;
 
 main :: fn() {
     m: u16 = mod16(17, 5);
@@ -17,6 +20,15 @@ main :: fn() {
     while total > 30 {
         total = total - 1;
     }
+    step := 3;
+    grid_pos = grid_pos + step;
+    grid_pos = grid_pos - 20;
+    w: u16 mod 8 = 7;
+    w += 3;
+    K :: 4;
+    CAP : u16 : 10;
     print("ci-ok\n");
     varvara.console.write(48 + m);
+    varvara.console.write(48 + grid_pos);
+    varvara.console.write(48 + w);
 }

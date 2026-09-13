@@ -3,5 +3,5 @@
  (name etal_sem)
  (package etal)
  (wrapped false)
- (modules types expand)
+  (modules types expand elab)
  (libraries etal_parser))

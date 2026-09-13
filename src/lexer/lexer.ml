@@ -200,7 +200,7 @@ let keyword_or_ident s =
   | "in" -> IN
   | "match" -> MATCH
   | "let" -> LET
-  | "const" -> CONST
+  | "mod" -> MOD
   | "import" -> IMPORT
   | "raw" -> RAW
   | "macro" -> MACRO
@@ -339,6 +339,7 @@ let next_token lexer =
     | ',' -> COMMA
     | ':' -> (match peek lexer with
       | Some ':' -> ignore (advance lexer); DOUBLE_COLON
+      | Some '=' -> ignore (advance lexer); COLON_ASSIGN
       | _ -> COLON)
     | ';' -> SEMICOLON
     | '.' -> (match peek lexer with

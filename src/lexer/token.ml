@@ -18,7 +18,7 @@ type token =
   | IN
   | MATCH
   | LET
-  | CONST
+  | MOD
   | IMPORT
   | RAW
   | RAW_BLOCK of string
@@ -83,6 +83,7 @@ type token =
   | RBRACKET
   | COMMA
   | COLON
+  | COLON_ASSIGN
   | SEMICOLON
   | DOT
   | ARROW
@@ -109,7 +110,7 @@ let token_to_string = function
   | IN -> "in"
   | MATCH -> "match"
   | LET -> "let"
-  | CONST -> "const"
+  | MOD -> "mod"
   | IMPORT -> "import"
   | RAW -> "raw"
   | RAW_BLOCK s -> s
@@ -168,6 +169,7 @@ let token_to_string = function
   | RBRACKET -> "]"
   | COMMA -> ","
   | COLON -> ":"
+  | COLON_ASSIGN -> ":="
   | SEMICOLON -> ";"
   | DOT -> "."
   | ARROW -> "->"

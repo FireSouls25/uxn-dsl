@@ -22,6 +22,7 @@ let rec typ_size = function
   | Ast.TypVoid -> 0
   | Ast.TypArray (t, n) -> n * (typ_size t)
   | Ast.TypPointer _ -> 2
+  | Ast.TypMod (b, _) -> typ_size b
 
 type codegen_env = {
   mutable global_vars: (string * var_info) list;
@@ -192,6 +193,17 @@ let rec expr_is_u8 env expr =
         | _ -> false)
      with Not_found -> false)
   | _ -> false
+
+(* Reduce the on-stack value into [0, m): the existing `%` lowering
+   with a constant modulus (DIVk MUL SUB / DIV2k MUL2 SUB2). Anything
+   stored into a mod-typed slot passes through this, so the bound
+   lives with the variable. Skipped for u8 mod 256 (identity: every
+   byte is already in range). *)
+let emit_mod_reduce env = function
+  | Ast.TypMod (Ast.TypU8, 256) -> ()
+  | Ast.TypMod (Ast.TypU8, m) -> emit env " #%02x DIVk MUL SUB" m
+  | Ast.TypMod (_, m) -> emit env " #%04x DIV2k MUL2 SUB2" m
+  | _ -> ()
 
 let rec codegen_expr env expr =
   match expr with
@@ -404,11 +416,13 @@ let rec codegen_expr env expr =
       (try
         let info = List.assoc name env.local_vars in
         codegen_rhs env right info.size;
+        emit_mod_reduce env info.typ;
         if info.size = 1 then emit env " .%s STZ" info.addr else emit env " .%s STZ2" info.addr
       with Not_found ->
         try
           let info = List.assoc name env.global_vars in
           codegen_rhs env right info.size;
+          emit_mod_reduce env info.typ;
           if info.size = 1 then emit env " .%s STZ" info.name else emit env " .%s STZ2" info.name
         with Not_found ->
           codegen_rhs env right 2;
@@ -585,12 +599,14 @@ let rec codegen_stmt env stmt =
       | Some expr ->
         let size = typ_size typ in
         codegen_rhs env expr size;
+        emit_mod_reduce env typ;
         if size = 1 then emit env " .%s STZ\n" addr else emit env " .%s STZ2\n" addr
       | None -> ()
     end else begin
-      (* Global variable - use zero-page addressing *)
+      (* Global variable - use zero-page addressing (label form;
+         the `$hh` address string below is bookkeeping only). *)
       let size = typ_size typ in
-      let addr =
+      let _addr =
         try (List.assoc name env.global_vars).addr
         with Not_found ->
           let addr_val = env.next_global_addr in
@@ -603,27 +619,38 @@ let rec codegen_stmt env stmt =
       match init with
       | Some expr ->
         codegen_rhs env expr size;
-        if size = 1 then emit env " %s STZ\n" addr else emit env " %s STZ2\n" addr
+        emit_mod_reduce env typ;
+        (* Label form, like every other store: raw `$hh` does not
+           assemble to a zero-page address in drifblim. *)
+        if size = 1 then emit env " .%s STZ\n" name else emit env " .%s STZ2\n" name
       | None -> ()
     end
-  | ConstDecl (name, expr) ->
+  | ConstDecl (name, typopt, expr) ->
+    (* Storage constant: zero-page slot initialized once (assignments
+       are rejected by the checker). An explicit mod type reduces the
+       initializer; an inferred type needs no reduction — a mod-typed
+       source is already in range, a plain source keeps its value. *)
+    let typ = match typopt with Some t -> t | None -> Ast.TypU16 in
     if env.in_func then begin
-      let addr = add_local_var env name Ast.TypU16 in
+      let addr = add_local_var env name typ in
       codegen_rhs env expr 2;
+      emit_mod_reduce env typ;
       emit env " .%s STZ2\n" addr
     end else begin
-      let addr =
+      let size = typ_size typ in
+      let _addr =
         try (List.assoc name env.global_vars).addr
         with Not_found ->
           let addr_val = env.next_global_addr in
-          env.next_global_addr <- env.next_global_addr + 2;
+          env.next_global_addr <- env.next_global_addr + size;
           let addr_str = sprintf "$%02x" addr_val in
-          let info = { name; addr = addr_str; is_local = false; typ = Ast.TypU16; size = 2 } in
+          let info = { name; addr = addr_str; is_local = false; typ; size } in
           env.global_vars <- (name, info) :: env.global_vars;
           addr_str
       in
-      codegen_rhs env expr 2;
-      emit env " %s STZ2\n" addr
+      codegen_rhs env expr size;
+      emit_mod_reduce env typ;
+      if size = 1 then emit env " .%s STZ\n" name else emit env " .%s STZ2\n" name
     end
   | BrkStmt ->
     emit env "BRK\n"
@@ -647,6 +674,8 @@ let rec codegen_stmt env stmt =
     emit env "STHr\n"
   | RPeek ->
     emit env "STHkr\n"
+  | InferDecl _ ->
+    failwith "internal error: unelaborated `:=` reached codegen"
   | RawStmt s ->
     emit env "%s\n" s
 
@@ -655,10 +684,12 @@ let codegen_func env (fn_def : Ast.func) =
   env.func_sigs <- (fn_def.name, List.map (fun (p: Ast.param) -> typ_size p.typ) fn_def.params) :: env.func_sigs;
   Buffer.add_string env.code (sprintf "\n@%s ( -- )\n" fn_def.name);
   start_func env fn_def.name;
-  (* Handle params: store from stack to zero-page slots *)
+  (* Handle params: store from stack to zero-page slots. A mod-typed
+     param is reduced on entry, so callers may pass plain values. *)
   List.iter (fun (p: Ast.param) ->
     let addr = add_local_var env p.name p.typ in
     let size = typ_size p.typ in
+    emit_mod_reduce env p.typ;
     if size = 1 then
       Buffer.add_string env.code (sprintf "    .%s STZ\n" addr)
     else
@@ -726,9 +757,10 @@ let codegen_program program =
   env.devices <- ("Console", [("vector",2);("read",1);("pad",4);("type",1);("write",1);("error",1)]) :: env.devices;
 
   Buffer.add_string env.entry_code "|0100\n";
-  Buffer.add_string env.entry_code ";main JSR2\n";
-  Buffer.add_string env.entry_code "HALT\n";
-  Buffer.add_string env.entry_code "BRK\n\n";
+  (* Global initializers (emitted below, while processing decls) must
+     run BEFORE main is called: they were historically appended after
+     HALT and never executed. The call sequence is emitted after the
+     decl loop for exactly this reason. *)
 
   List.iter (fun decl ->
     match decl with
@@ -739,9 +771,12 @@ let codegen_program program =
       ()
     | ImportDecl _ ->
       ()
+    | GlobalInferDecl _ ->
+      (* Unreachable: Elab.elaborate_program rewrites `:=` before codegen. *)
+      failwith "internal error: unelaborated global `:=` reached codegen"
     | GlobalVarDecl (name, typ, init) ->
       let size = typ_size typ in
-      let addr =
+      let _addr =
         try (List.assoc name env.global_vars).addr
         with Not_found ->
           let addr_val = env.next_global_addr in
@@ -758,9 +793,12 @@ let codegen_program program =
       (match init with
       | Some expr ->
         codegen_rhs env expr size;
-        if size = 1 then emit env " %s STZ\n" addr else emit env " %s STZ2\n" addr
+        emit_mod_reduce env typ;
+        (* Label form, like every other store: raw `$hh` does not
+           assemble to a zero-page address in drifblim. *)
+        if size = 1 then emit env " .%s STZ\n" name else emit env " .%s STZ2\n" name
       | None -> ())
-    | GlobalConstDecl (name, expr) ->
+    | GlobalConstDecl (name, None, expr) ->
       env.constants <- name :: env.constants;
       (match expr with
       | IntLit n ->
@@ -769,6 +807,30 @@ let codegen_program program =
         Buffer.add_string env.func_code (sprintf "|%s @%s\n" id name)
       | _ ->
         Buffer.add_string env.func_code (sprintf "|0000 @%s\n" name))
+    | GlobalConstDecl (name, Some typ, expr) ->
+      (* Explicit-type constant: zero-page storage slot initialized
+         once (assignments are rejected by the checker), read as a
+         normal variable — unlike `::` label constants above. *)
+      let size = typ_size typ in
+      let _addr =
+        try (List.assoc name env.global_vars).addr
+        with Not_found ->
+          let addr_val = env.next_global_addr in
+          env.next_global_addr <- env.next_global_addr + size;
+          env.zp_used <- env.zp_used + size;
+          if env.zp_used > 0x100 then
+            failwith (Printf.sprintf "out of zero-page memory (%d bytes used)" env.zp_used);
+          let addr_str = sprintf "$%02x" addr_val in
+          let info = { name; addr = addr_str; is_local = false; typ; size } in
+          env.global_vars <- (name, info) :: env.global_vars;
+          env.zero_order <- ZVar (name, size) :: env.zero_order;
+          addr_str
+      in
+      codegen_rhs env expr size;
+      emit_mod_reduce env typ;
+      (* Label form: raw `$hh` does not assemble to a zero-page
+         address in drifblim. *)
+      if size = 1 then emit env " .%s STZ\n" name else emit env " .%s STZ2\n" name
     | DeviceDecl device ->
       (* Store device for later lookups *)
       let has_vector = List.exists (fun p -> p.port_name = "vector") device.ports in
@@ -836,6 +898,12 @@ let codegen_program program =
       Buffer.add_string env.data raw;
       Buffer.add_string env.data "\n"
   ) program;
+
+  (* Entry sequence comes last in entry_code so global initializers
+     above actually run (see note at `|0100`). *)
+  Buffer.add_string env.entry_code ";main JSR2\n";
+  Buffer.add_string env.entry_code "HALT\n";
+  Buffer.add_string env.entry_code "BRK\n\n";
 
   let buf = Buffer.create 1024 in
 

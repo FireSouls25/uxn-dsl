@@ -31,7 +31,12 @@
 name: etal-ci
 
 on:
+  # dev branch pushes skip CI (push freely while iterating); CI runs on
+  # main pushes, version tags (releases) and any pull request, so opening
+  # a PR from dev still gates before merge.
   push:
+    branches: [main]
+    tags: ['v*']
   pull_request:
 
 defaults:
