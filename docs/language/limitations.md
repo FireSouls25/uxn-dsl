@@ -84,7 +84,10 @@ not are marked **footgun**.
 
 ## Surface gaps
 
-- Reserved but unused keywords: `match`, `let`, `byte`,
+- Drifblim rejects some `@label` names (`face` observed — `Name
+  invalid` at assembly): rename the datum. Prefer distinctive
+  asset names (`hero0`, not `face0`).
+- Reserved but unused keywords: `let`, `byte`,
   `short`. The `RawLit`, `CompoundLit` and `RawStmt` AST nodes exist
   but no syntax builds them.
 - No string variables or concatenation — only literals, `print`, and

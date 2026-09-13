@@ -1,0 +1,20 @@
+( lib/scene.ux — scene id + transitions.
+  Scenes themselves are a game-side `match scene { ... }` dispatch
+  over setup/update functions (see the demo game); what is shareable
+  lives here: the current id, switching, and fullscreen wipes.
+  Needs the Screen device (for wipe); palette fades stay game-side
+  because palettes can't be read back. )
+
+import "screen.ux"
+
+scene: u8 = 0;
+
+scene_go :: fn(id: u8) {
+    scene = id;
+}
+
+( Fullscreen wipe in a fill mode (see screen.ux PIXEL_*). A macro
+  like the other draw helpers: only call sites need Screen. )
+macro wipe(mode: u8) {
+    clear(mode);
+}

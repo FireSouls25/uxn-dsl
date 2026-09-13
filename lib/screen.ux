@@ -1,0 +1,67 @@
+( lib/screen.ux — screen helpers over a game-declared Screen device.
+  Import your devices file FIRST, then this library:
+      import "devices.ux"
+      import "../lib/screen.ux"
+  (The Screen device stays game-declared data, never a builtin —
+  so this module references but never declares it.)
+
+  Design rule for this library: device-touching helpers are MACROS,
+  pure logic are functions. Macro bodies check at the call site, so
+  importing screen.ux never forces a Screen (or System) device on
+  anyone — call sites need them declared, which games do anyway. )
+
+( sprite mode bits, per the emulator source (screen.js): bit7 2bpp,
+  bit6 layer, bit5/bit4 flips, low nibble blend/color. Snake's `1`
+  is 1bpp-from-channel-1; OR in SPRITE_2BPP for true 2bpp tiles. )
+SPRITE_2BPP :: 128;
+SPRITE_LAYER :: 64;
+SPRITE_FLIPY :: 32;
+SPRITE_FLIPX :: 16;
+SPRITE_NORM :: 1;
+
+( pixel mode bits: bit7 fill, bit6 layer, bit5/bit4 fill direction
+  (flip side), low 2 bits color. )
+PIXEL_FILL :: 128;
+PIXEL_LAYER :: 64;
+PIXEL_FLIPY :: 32;
+PIXEL_FLIPX :: 16;
+
+( auto port bits: step x, step y, step addr, extra-sprite count. )
+AUTO_X :: 1;
+AUTO_Y :: 2;
+AUTO_ADDR :: 4;
+
+( Screen size as a macro for the same reason: call sites need
+  Screen declared, importers don't. )
+macro screen_size(w: u16, h: u16) {
+    Screen.width = w;
+    Screen.height = h;
+}
+
+( One blit, zero-cost: x/y/addr/sprite in blit order. The write to
+  `sprite` triggers the draw — order is semantic, which is why this
+  is one reviewed macro instead of four loose writes. )
+macro blit(x: u16, y: u16, tile: u16, mode: u8) {
+    Screen.x = x;
+    Screen.y = y;
+    Screen.addr = tile;
+    Screen.sprite = mode;
+}
+
+( Fullscreen fill from 0,0 to the edges in the given mode. A macro
+  like blit: only call sites need Screen declared. )
+macro clear(mode: u8) {
+    Screen.x = 0;
+    Screen.y = 0;
+    Screen.pixel = mode;
+}
+
+( Palette theme (see the Varvara color table). A macro on purpose:
+  macros are only checked where called, so importing screen.ux never
+  forces a System device on games that don't theme. Call sites need
+  System declared (games declare it for vectors anyway). )
+macro theme(r: u16, g: u16, b: u16) {
+    System.r = r;
+    System.g = g;
+    System.b = b;
+}

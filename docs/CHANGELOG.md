@@ -42,4 +42,11 @@ whole-value uses are compile errors). `lib/` stdlib: 8.8 fixed point
 predicates (`u32.ux`), both console-gated. Width-soundness fixes:
 `<=`/`>=` compared the wrong bytes, `&&`/`||` leaked stack on short
 sides, prefix `-`/`~`/`!` missed both their space and their byte
-forms, and `-> u8` callees now compose (returns sized to declaration).
+forms, and `-> u8` callees now compose (returns sized to declaration). Graphics
+phases as `lib/` modules, all console-gated: `screen.ux` (size, blit,
+clear, theme, emulator-decoded mode bits), `object.ux` + `anim.ux`
+(struct rows, spawn/draw, frame tables), `collide.ux` (layer rule,
+cell + AABB hits), `scene.ux` + `menu.ux` (id + wipes, edge polls +
+wraparound select), plus an `objdemo` game playing them together.
+Lib rule: device-touching helpers are macros (checked at call sites,
+so imports never force devices).

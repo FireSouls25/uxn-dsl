@@ -1,0 +1,75 @@
+( lib/object.ux — fixed object rows over buffer storage.
+  Import your devices file first, then this library (screen
+  helpers come along transitively):
+      import "devices.ux"
+      import "../lib/object.ux"
+  Indices are u16 (for-loop variables don't narrow); 255 means
+  "no slot". Flags layout: bit0 visible, bit1 solid, bits 2-3
+  layer 0-3 (see collide.ux for the interaction rule). )
+
+import "screen.ux"
+
+Obj :: struct { x: u16; y: u16; tile: u16; flags: u8; };
+
+MAXOBJ :: 16;
+
+buffer objs[16]: Obj;
+
+OBJ_VISIBLE :: 1;
+OBJ_SOLID :: 2;
+OBJ_LAYER0 :: 0;
+OBJ_LAYER1 :: 4;
+OBJ_LAYER2 :: 8;
+OBJ_LAYER3 :: 12;
+OBJ_LAYERMASK :: 12;
+
+( First invisible slot, or 255 when full. )
+obj_free :: fn() -> u16 {
+    for i in 0..16 {
+        if objs[i].flags & OBJ_VISIBLE == 0 {
+            return i;
+        }
+    }
+    return 255;
+}
+
+obj_spawn :: fn(x: u16, y: u16, tile: u16, flags: u8) -> u16 {
+    i: u16 = obj_free();
+    if i == 255 {
+        return 255;
+    }
+    objs[i].x = x;
+    objs[i].y = y;
+    objs[i].tile = tile;
+    objs[i].flags = flags;
+    return i;
+}
+
+obj_hide :: fn(i: u16) {
+    objs[i].flags = objs[i].flags & 254;
+}
+
+obj_hide_all :: fn() {
+    for i in 0..16 {
+        obj_hide(i);
+    }
+}
+
+obj_move :: fn(i: u16, x: u16, y: u16) {
+    objs[i].x = x;
+    objs[i].y = y;
+}
+
+( Macros: they expand at call sites, so importing object.ux never
+  forces a Screen device — only drawing call sites need one. )
+macro obj_draw(i: u16) {
+    if objs[i].flags & OBJ_VISIBLE != 0 {
+        blit(objs[i].x, objs[i].y, objs[i].tile, SPRITE_NORM);
+    }
+}
+
+macro draw_all() {
+    for i in 0..16 {
+        obj_draw(i);
+    }
+}

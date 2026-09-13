@@ -1,0 +1,61 @@
+( object + collision harness: spawn/move/flags/layers/hit shapes.
+  Expected console bytes:
+  00 00 00 01 00 0b 00 15 30 30 30 31 31 31 30 00 00 00 00
+  (slots 0,1; moved x=11 y=21; layers L0/L1 miss; apart miss;
+  layered miss; solid hit; aabb hit; one-solid hit; ghost miss;
+  slot 0 reused; hide-all then slot 0 again) )
+device Screen 32 {    vector: 2
+    width: 2
+    height: 2
+    auto: 1
+    pad: 1
+    x: 2
+    y: 2
+    addr: 2
+    pixel: 1
+    sprite: 1
+}
+import "screen.ux"
+import "object.ux"
+import "collide.ux"
+
+emit16 :: fn(v: u16) {
+    varvara.console.write((v >> 8) & 255);
+    varvara.console.write(v & 255);
+}
+
+emit1 :: fn(b: bool) {
+    if b {
+        varvara.console.write(49);
+    } else {
+        varvara.console.write(48);
+    }
+}
+
+main :: fn() {
+    a: u16 = obj_spawn(10, 20, 100, OBJ_VISIBLE + OBJ_SOLID);
+    b: u16 = obj_spawn(30, 40, 200, OBJ_VISIBLE + OBJ_SOLID + OBJ_LAYER1);
+    emit16(a);
+    emit16(b);
+    obj_move(a, 11, 21);
+    emit16(objs[a].x);
+    emit16(objs[a].y);
+    emit1(layers_hit(objs[a].flags, objs[b].flags));
+    emit1(obj_cell_hit(a, b));
+    obj_move(b, 11, 21);
+    emit1(obj_cell_hit(a, b));
+    objs[b].flags = OBJ_VISIBLE + OBJ_SOLID;
+    emit1(obj_cell_hit(a, b));
+    emit1(obj_aabb_hit(a, b, 8, 8));
+    objs[b].flags = OBJ_VISIBLE;
+    emit1(obj_cell_hit(a, b));
+    objs[a].flags = OBJ_VISIBLE;
+    emit1(obj_cell_hit(a, b));
+    obj_hide(a);
+    c: u16 = obj_spawn(1, 2, 3, OBJ_VISIBLE);
+    emit16(c);
+    obj_hide_all();
+    d: u16 = obj_spawn(9, 9, 9, OBJ_VISIBLE);
+    emit16(d);
+    draw_all();
+}

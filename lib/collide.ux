@@ -1,0 +1,22 @@
+( lib/collide.ux — layer interaction + overlap tests.
+  Rule v1: two objects interact iff they share a layer and at least
+  one of them is solid. So a solid player eats nonsolid food on its
+  layer, bounces off solid walls, and two ghosts pass through each
+  other — while anything on another layer is a different world.
+  Layer lives in flags bits 2-3 (see object.ux). )
+
+import "object.ux"
+
+layers_hit :: fn(a: u8, b: u8) -> bool {
+    return ((a & OBJ_LAYERMASK) == (b & OBJ_LAYERMASK)) && (((a & OBJ_SOLID) != 0) || ((b & OBJ_SOLID) != 0));
+}
+
+( Same 8px cell + interaction rule. )
+obj_cell_hit :: fn(i: u16, j: u16) -> bool {
+    return ((objs[i].x >> 3) == (objs[j].x >> 3)) && ((objs[i].y >> 3) == (objs[j].y >> 3)) && layers_hit(objs[i].flags, objs[j].flags);
+}
+
+( Pixel AABB with explicit size (no struct growth for hitboxes). )
+obj_aabb_hit :: fn(i: u16, j: u16, w: u16, h: u16) -> bool {
+    return layers_hit(objs[i].flags, objs[j].flags) && (objs[i].x < objs[j].x + w) && (objs[j].x < objs[i].x + w) && (objs[i].y < objs[j].y + h) && (objs[j].y < objs[i].y + h);
+}

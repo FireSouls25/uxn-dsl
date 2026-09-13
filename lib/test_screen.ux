@@ -1,0 +1,46 @@
+( screen harness: size/theme round-trip through real ports.
+  Expected console bytes: 00 a0 00 90 00 64 00 c8 01 2c )
+device Screen 32 {
+    vector: 2
+    width: 2
+    height: 2
+    auto: 1
+    pad: 1
+    x: 2
+    y: 2
+    addr: 2
+    pixel: 1
+    sprite: 1
+}
+device System 0 {
+    vector: 2
+    expansion: 2
+    wst: 1
+    rst: 1
+    metadata: 2
+    r: 2
+    g: 2
+    b: 2
+    debug: 1
+    state: 1
+}
+import "screen.ux"
+
+data dot = [0, 0, 0, 0, 0, 0, 0, 0];
+
+emit16 :: fn(v: u16) {
+    varvara.console.write((v >> 8) & 255);
+    varvara.console.write(v & 255);
+}
+
+main :: fn() {
+    screen_size(160, 144);
+    emit16(Screen.width);
+    emit16(Screen.height);
+    theme(100, 200, 300);
+    emit16(System.r);
+    emit16(System.g);
+    emit16(System.b);
+    blit(8, 16, &dot, SPRITE_NORM);
+    clear(PIXEL_FILL);
+}

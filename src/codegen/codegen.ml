@@ -341,13 +341,13 @@ let rec codegen_expr env expr =
     in
     (match op with
      | Lshift | Rshift ->
-       (* Real SFT2. Control byte: high nibble = left distance,
-          low nibble = right distance (rightward first). Constant
-          amounts fold to one literal (masked mod 16); dynamic
-          amounts go through the high nibble via #40 SFT. *)
-       codegen_rhs env left 2;
-       emit env " ";
-       (match right with
+        (* Real SFT2. Control byte: high nibble = left distance,
+           low nibble = right distance (rightward first). Constant
+           amounts fold to one literal (masked mod 16); dynamic
+           amounts go through the high nibble via #40 SFT. *)
+        codegen_rhs env left 2;
+        emit env " ";
+        (match right with
         | IntLit n ->
           let c = (match op with
             | Lshift -> ((n land 0x0f) lsl 4)
@@ -358,12 +358,26 @@ let rec codegen_expr env expr =
           (match op with
            | Lshift -> emit env " #40 SFT SFT2"
            | _ -> emit env " SFT2"))
-     | _ ->
-       emit_operand left;
-       emit env " ";
-       emit_operand right;
-       emit env " ";
-       (match op with
+      | AndAnd ->
+        (* Total && / ||: each side reduces to one byte first, so
+           short comparisons combine without leaking stack bytes.
+           Lives OUTSIDE emit_operand below (like shifts): emitting
+           operands twice would unbalance the stack. *)
+        codegen_cond env left;
+        emit env " ";
+        codegen_cond env right;
+        emit env " AND"
+      | OrOr ->
+        codegen_cond env left;
+        emit env " ";
+        codegen_cond env right;
+        emit env " ORA"
+      | _ ->
+        emit_operand left;
+        emit env " ";
+        emit_operand right;
+        emit env " ";
+        (match op with
        | Add -> if use8 then emit env "ADD" else emit env "ADD2"
        | Sub -> if use8 then emit env "SUB" else emit env "SUB2"
        | Mul -> if use8 then emit env "MUL" else emit env "MUL2"
@@ -381,19 +395,7 @@ let rec codegen_expr env expr =
            wrong bytes — keep-mode leaves both operands.) *)
         | Le -> if use8 then emit env "GTH #00 EQU" else emit env "GTH2 #00 EQU"
         | Ge -> if use8 then emit env "LTH #00 EQU" else emit env "LTH2 #00 EQU"
-        | AndAnd ->
-          (* Total && / ||: each side reduces to one byte first, so
-             short comparisons combine without leaking stack bytes. *)
-          codegen_cond env left;
-          emit env " ";
-          codegen_cond env right;
-          emit env " AND"
-        | OrOr ->
-          codegen_cond env left;
-          emit env " ";
-          codegen_cond env right;
-          emit env " ORA"
-       | _ -> ()))
+        | _ -> ()))
   | UnOp (op, expr) ->
     codegen_expr env expr;
     (* Byte operands need byte-width negation/complement/test —

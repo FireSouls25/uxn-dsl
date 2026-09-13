@@ -15,6 +15,44 @@ see `u32` below); `ALL_CAPS` constants; every module ships a
 in its header and enforced by `sh lib/check.sh` (local-only, needs
 SDL2 like `tests/smoke.sh`).
 
+Library design rule (falls out of whole-program checking plus
+user-declared devices): device-touching helpers are MACROS, pure
+logic are functions. Macro bodies check at the call site, so
+importing a lib module never forces a device on anyone — call sites
+need them declared. Import your devices file first, then lib
+modules; function signatures and struct layouts are order-free,
+device references resolve in splice order.
+
+## screen.ux
+
+Screen helpers over a game-declared `Screen` device: `screen_size`,
+`blit` (zero-cost macro — the `sprite` write triggers the draw, so
+order is semantic), `clear`, `theme` (macro, so no forced `System`
+device), `AUTO_*` bits, and named sprite/pixel mode bits decoded
+from the emulator source (`SPRITE_2BPP/LAYER/FLIPY/FLIPX`,
+`PIXEL_FILL/LAYER/FLIPY/FLIPX`; snake's `SPRITE_NORM` is
+1bpp-from-channel-1, OR in `SPRITE_2BPP` for true 2bpp tiles).
+
+## object.ux, anim.ux
+
+Fixed object rows: `Obj :: struct { x, y, tile, flags }` in
+`buffer objs[16]`, indices are `u16` (255 = no slot), flags are
+visible/solid/layer bits. `obj_spawn/move/hide/hide_all/free`,
+`obj_draw`/`draw_all` (macros), `OBJ_*` consts. Animation is frame
+tables plus per-object base/len/rate/tick with `anim_play/step`.
+
+## collide.ux, scene.ux, menu.ux
+
+`layers_hit` (same layer and at least one solid — edible food,
+solid walls, pass-through ghosts), `obj_cell_hit` (8px cells),
+`obj_aabb_hit` (explicit sizes). Scenes are a game-side
+`match scene` dispatch; the module holds the id, `scene_go`, and
+`wipe`. Menus are edge polls (`menu_poll` — call once per frame),
+`menu_items/next/prev` with wraparound; act on `poll & MASK`
+idioms, never equality. The `examples/objdemo/` game (untracked,
+like the other examples) plays all phases together: title menu,
+animated player, layered walls, score-to-win, game-over loop.
+
 ## fix16.ux
 
 8.8 signed fixed point over `u16` shorts, modeled on fix16.tal: range -128 <= x < 128, `#8000` is invalid input.

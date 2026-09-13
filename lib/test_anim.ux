@@ -1,0 +1,29 @@
+( animation harness: frame selection over ticks (rate 2 over
+  3 frames of test values, so ticks 1..6 read 100,200,200,300,300,100).
+  Expected console bytes: 00 64 00 c8 00 c8 01 2c 01 2c 00 64 )
+import "anim.ux"
+
+emit16 :: fn(v: u16) {
+    varvara.console.write((v >> 8) & 255);
+    varvara.console.write(v & 255);
+}
+
+main :: fn() {
+    anim_frames[0] = 100;
+    anim_frames[1] = 200;
+    anim_frames[2] = 300;
+    i: u16 = obj_spawn(0, 0, 0, OBJ_VISIBLE);
+    anim_play(i, 0, 3, 2);
+    anim_step(i);
+    emit16(objs[i].tile);
+    anim_step(i);
+    emit16(objs[i].tile);
+    anim_step(i);
+    emit16(objs[i].tile);
+    anim_step(i);
+    emit16(objs[i].tile);
+    anim_step(i);
+    emit16(objs[i].tile);
+    anim_step(i);
+    emit16(objs[i].tile);
+}
