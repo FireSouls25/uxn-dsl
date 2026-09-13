@@ -201,6 +201,8 @@ let keyword_or_ident s =
   | "match" -> MATCH
   | "let" -> LET
   | "mod" -> MOD
+  | "meta" -> META
+  | "struct" -> STRUCT
   | "import" -> IMPORT
   | "raw" -> RAW
   | "macro" -> MACRO
@@ -326,6 +328,7 @@ let next_token lexer =
       | _ -> GT)
     | '=' -> (match peek lexer with
       | Some '=' -> ignore (advance lexer); EQ
+      | Some '>' -> ignore (advance lexer); FAT_ARROW
       | _ -> ASSIGN)
     | '!' -> (match peek lexer with
       | Some '=' -> ignore (advance lexer); NEQ

@@ -19,6 +19,8 @@ type token =
   | MATCH
   | LET
   | MOD
+  | META
+  | STRUCT
   | IMPORT
   | RAW
   | RAW_BLOCK of string
@@ -87,6 +89,7 @@ type token =
   | SEMICOLON
   | DOT
   | ARROW
+  | FAT_ARROW
   | DOUBLE_COLON
   | DOUBLE_DOT
   | PIPE_ARROW
@@ -111,6 +114,8 @@ let token_to_string = function
   | MATCH -> "match"
   | LET -> "let"
   | MOD -> "mod"
+  | META -> "meta"
+  | STRUCT -> "struct"
   | IMPORT -> "import"
   | RAW -> "raw"
   | RAW_BLOCK s -> s
@@ -173,6 +178,7 @@ let token_to_string = function
   | SEMICOLON -> ";"
   | DOT -> "."
   | ARROW -> "->"
+  | FAT_ARROW -> "=>"
   | DOUBLE_COLON -> "::"
   | DOUBLE_DOT -> ".."
   | PIPE_ARROW -> "=>"

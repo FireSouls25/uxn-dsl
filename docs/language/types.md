@@ -6,6 +6,7 @@
 | `u16` | 2 bytes | a big-endian short, high byte deeper |
 | `u16 mod N` | 2 bytes | a short always in `[0, N)` — stores wrap |
 | `u8 mod N` | 1 byte | a byte always in `[0, N)` — stores wrap |
+| `Point` (struct) | sum of fields | rows in buffers/variables; field access only |
 | `bool` | 1 byte | `0x00` or `0x01` (guaranteed by comparisons) |
 | `void` | 0 bytes | no value (statements, void calls) |
 | `[N] T` | N × sizeof(T) | fixed array (only `u8`/`u16`/`bool` elements) |
@@ -62,6 +63,10 @@ arguments, and mixed operators. There is **no implicit narrowing**:
 assigning a `u16` to a `u8` is a type error. The single exception is
 `varvara.console.write` / `error`, which truncate to the low byte,
 because console ports are inherently byte-wide.
+
+Struct types never widen, narrow, or compare: any whole-value use is
+a compile error. Unknown type names (typos included) fail at the use
+site: `unknown type \`u166\``.
 
 ## Truthiness
 

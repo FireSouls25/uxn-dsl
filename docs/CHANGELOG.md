@@ -29,4 +29,17 @@ whose stores wrap automatically; assignments to constants are compile
 errors. Two codegen fixes found along the way: global initializers
 now execute before `main` (they were emitted after `HALT` and never
 ran), and global stores use label form (raw `$hh` misassembles in
-drifblim).
+drifblim). Then: `return;` in events emits `BRK`, short `if`/`while`
+conditions reduce via `#0000 NEQ2`, pure `for` bounds hoist to a
+hidden temp, and `meta { title, author }` emits a spec-shaped ROM
+metadata blob with boot-time wiring. And: whole-program function
+signatures, so forward calls check fully and undefined calls fail
+fast (recursion still unsupported). `match` desugars to a freshened
+temp plus `if`/`elif` (integer arms, trailing `_`). Named `struct`
+types with `.field` access over buffers and variables (scalar fields;
+whole-value uses are compile errors). `lib/` stdlib: 8.8 fixed point
+(`fix16.ux`, exact restoring division, saturating mul) and 32-bit
+predicates (`u32.ux`), both console-gated. Width-soundness fixes:
+`<=`/`>=` compared the wrong bytes, `&&`/`||` leaked stack on short
+sides, prefix `-`/`~`/`!` missed both their space and their byte
+forms, and `-> u8` callees now compose (returns sized to declaration).

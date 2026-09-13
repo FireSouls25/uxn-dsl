@@ -1,0 +1,31 @@
+( u32 stdlib harness: predicates over hi/lo pairs.
+  Expected console output bytes:
+  31 30 31 31 30 31 31 30 31 31 30 34 39
+  ("10110110110" then "49": eq, eq, ne, is_zero, is_zero,
+  non_zero, lt-hi, lt-lo, gt-lo, lteq, gteq, bitcount13=4,
+  bitcount256=9) )
+import "u32.ux"
+
+emit1 :: fn(b: bool) {
+    if b {
+        varvara.console.write(49);
+    } else {
+        varvara.console.write(48);
+    }
+}
+
+main :: fn() {
+    emit1(u32_eq(0, 1, 0, 1));
+    emit1(u32_eq(0, 1, 0, 2));
+    emit1(u32_ne(0, 1, 0, 2));
+    emit1(u32_is_zero(0, 0));
+    emit1(u32_is_zero(0, 1));
+    emit1(u32_non_zero(1, 0));
+    emit1(u32_lt(0, 5, 1, 0));
+    emit1(u32_lt(1, 9, 1, 5));
+    emit1(u32_gt(1, 9, 1, 5));
+    emit1(u32_lteq(2, 7, 2, 7));
+    emit1(u32_gteq(2, 7, 2, 8));
+    varvara.console.write(48 + u8_bitcount(13));
+    varvara.console.write(48 + u16_bitcount(256));
+}

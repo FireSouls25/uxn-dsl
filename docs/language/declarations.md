@@ -1,8 +1,10 @@
 # Declarations
 
-Every ETAL file is a list of top-level declarations, compiled in order
-(definition order matters for call-site code generation — see
-[limitations](limitations.md)).
+Every ETAL file is a list of top-level declarations. Function
+signatures are collected whole-program before checking, so call
+order is free (definition order only matters for zero-page layout
+and entry emission) — but recursion stays unsupported, see
+[limitations](limitations.md).
 
 ## Devices
 
@@ -80,6 +82,20 @@ Convention (not enforced): `::` constants are `ALL_CAPS`, like the
 `WIDTH` above; variables are `snake_case`. Locals use the same four
 forms inside functions.
 
+## ROM metadata
+
+```ux
+meta { title: "Snake", author: "you" }
+```
+
+Top-level only, at most once per program (a second block anywhere in
+the import splice is a duplicate-definition error). Emits a
+`@etal_meta` blob in the Varvara shape (`00 "Title" 0a "Author" 00`)
+plus a boot-time `;etal_meta .System/metadata DEO2` write so
+emulators pick it up. If the program doesn't declare its own `System`
+device, a minimal table is emitted for the wiring. Both fields are
+required, non-empty, and NUL-free; unknown fields are rejected.
+
 ## Globals and layout
 
 Globals reserve zero-page bytes in declaration order; the compiler
@@ -119,6 +135,27 @@ v: u16 = tail[i + 1];    ( LDA/LDA2; u16 elements scale by 2 )
 
 Only global arrays and buffers are indexable; there are no array
 literals or initializers, and no bounds checks — like the hardware.
+
+## Structs
+
+```ux
+Point :: struct { x: u16; y: u8; };
+
+buffer pts[64]: Point;   ( 64 rows × 3 bytes, main RAM )
+p: Point;                ( one row, zero-page slot )
+
+pts[i].x = nx;           ( base + i*3, then +0 field offset )
+py: u8 = p.y;            ( slot address + 2 )
+```
+
+A `struct` declares field offsets at type-check time (v1 fields are
+scalar `u8`/`u16`/`bool` — no nesting, no `mod`, no arrays). Only
+`.field` access compiles: whole struct values never touch the stack,
+so assigning, comparing, passing or returning a whole struct is a
+compile error with a field-directed message. Struct-typed variables
+take no initializer (declare bare, then assign fields); buffers of
+structs are the fix for parallel-array desync. A trailing `;` after
+the closing brace is accepted.
 
 ## Functions and events
 

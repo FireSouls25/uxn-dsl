@@ -5,10 +5,15 @@
     @main__d $2
     @main__total $2
     @main__i $2
+    @main__for_end_1 $2
     @main__step $1
     @main__w $2
     @main__K $2
     @main__CAP $2
+    @main__ok $1
+    @main__ng $1
+    @main____match_2 $2
+    @late__x $2
 
 %RTN { JMP2r }
 %EMIT { #18 DEO }
@@ -20,9 +25,11 @@
 |10 @Console/vector $2 &read $1 &pad $4 &type $1 &write $1 &error $1
 
 |000a @ten
+|00 @System/vector $2 &expansion $2 &wst $1 &rst $1 &metadata $2 &r $2 &g $2 &b $2 &debug $1 &state $1
 
 |0100
 #000f #0010 DIV2k MUL2 SUB2 .grid_pos STZ2
+;etal_meta .System/metadata DEO2
 ;main JSR2
 HALT
 BRK
@@ -41,21 +48,22 @@ JMP2r
 #0042 ;cells #0001 #0002 MUL2 ADD2 STA2
 .main__m LDZ2 .main__d LDZ2 ADD2 .main__total STZ2
 #0000 .main__i STZ2
-&for_1
-.main__i LDZ2 #0002 LTH2 ?&for_cont_2
- !&for_end_3
-&for_cont_2
+#0002 .main__for_end_1 STZ2
+&for_2
+.main__i LDZ2 .main__for_end_1 LDZ2 LTH2 ?&for_cont_3
+ !&for_end_4
+&for_cont_3
 #0030 .main__i LDZ2 ADD2 ;cells .main__i LDZ2 #0002 ADD2 #0002 MUL2 ADD2 STA2
 .main__i LDZ2 INC2 .main__i STZ2
- !&for_1
-&for_end_3
-&while_4
-.main__total LDZ2 #001e GTH2 ?&while_cont_5
- !&while_end_6
-&while_cont_5
+ !&for_2
+&for_end_4
+&while_5
+.main__total LDZ2 #001e GTH2 ?&while_cont_6
+ !&while_end_7
+&while_cont_6
 .main__total LDZ2 #0001 SUB2 .main__total STZ2
- !&while_4
-&while_end_6
+ !&while_5
+&while_end_7
 #03 .main__step STZ
 .grid_pos LDZ2 .main__step LDZ #00 SWP ADD2 #0010 DIV2k MUL2 SUB2 .grid_pos STZ2
 .grid_pos LDZ2 #0014 SUB2 #0010 DIV2k MUL2 SUB2 .grid_pos STZ2
@@ -63,13 +71,53 @@ JMP2r
 .main__w LDZ2 #0003 ADD2 #0008 DIV2k MUL2 SUB2 .main__w STZ2
 #0004 .main__K STZ2
 #000a .main__CAP STZ2
-;str_0 &print_7 LDAk .Console/write DEO INC2 LDAk ?&print_7 POP2
+#03 ;pts #0000 #0002 MUL2 ADD2 STA
+#04 ;pts #0001 #0002 MUL2 ADD2 #0001 ADD2 STA
+#00 .main__ok STZ
+.main__w LDZ2 #0002 GTH2 #00 EQU ?&if_then_8
+ !&if_end_10
+&if_then_8
+#01 .main__ok STZ
+&if_end_10
+.main__w LDZ2 #0002 LTH2 #00 EQU ?&if_then_11
+ !&if_end_13
+&if_then_11
+.main__ok LDZ #00 SWP #0002 ADD2 NIP .main__ok STZ
+&if_end_13
+#03 .main__ng STZ
+.main__m LDZ2 .main____match_2 STZ2
+.main____match_2 LDZ2 #0000 EQU2 ?&if_then_14
+ !&if_else_15
+&if_then_14
+#41 .Console/write DEO
+ !&if_end_16
+&if_else_15
+.main____match_2 LDZ2 #0002 EQU2 ?&elif_then_17
+ !&elif_else_18
+&elif_then_17
+#42 .Console/write DEO
+ !&if_end_16
+&elif_else_18
+#43 .Console/write DEO
+&if_end_16
+;str_0 &print_19 LDAk .Console/write DEO INC2 LDAk ?&print_19 POP2
 #0030 .main__m LDZ2 ADD2 NIP .Console/write DEO
 #0030 .grid_pos LDZ2 ADD2 NIP .Console/write DEO
 #0030 .main__w LDZ2 ADD2 NIP .Console/write DEO
+#0030 ;pts #0000 #0002 MUL2 ADD2 LDA #00 SWP ADD2 ;pts #0001 #0002 MUL2 ADD2 #0001 ADD2 LDA #00 SWP ADD2 NIP .Console/write DEO
+#0030 #0001 ;late JSR2 ADD2 NIP .Console/write DEO
+#0030 .main__ok LDZ #00 SWP ADD2 NIP .Console/write DEO
+#0030 .main__ng LDZ #00 SWP SUB #00 SWP ADD2 NIP .Console/write DEO
 JMP2r
 
+@late ( -- )
+    .late__x STZ2
+.late__x LDZ2 #0001 ADD2 JMP2r
+JMP2r
+
+@etal_meta [ 00 63 69 0a 65 74 61 6c 00 $2 ]
 
 |2000 @cells $16
+|2010 @pts $4
 
 @str_0 "c "i "- "o "k \n \0

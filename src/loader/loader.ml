@@ -15,6 +15,8 @@ let decl_name = function
   | GlobalVarDecl (n, _, _) -> Some ("global", n)
   | GlobalInferDecl (n, _) -> Some ("global", n)
   | GlobalConstDecl (n, _, _) -> Some ("constant", n)
+  | MetaDecl _ -> Some ("meta block", "meta")
+  | StructDecl s -> Some ("struct", s.struct_name)
   | DeviceDecl d -> Some ("device", d.device_name)
   | GroupDecl g -> Some ("group", g.group_name)
   | DataDecl d -> Some ("data", d.data_name)

@@ -36,7 +36,7 @@ Identifiers are letters, digits and underscores (must not start with a
 digit). These words are reserved:
 
 ```
-fn event return if elif else while for in match let mod
+fn event return if elif else while for in match let mod meta struct
 import raw macro buffer device goto data group label
 rpush rpop rpeek brk
 u8 u16 bool byte short
@@ -44,7 +44,8 @@ true false
 ```
 
 `:=` is one token (inferred declaration); `::` is one token
-(inferred constant, or `fn`/`event` after a name). `match`, `let`,
+(inferred constant, or `fn`/`event`/`struct` after a name); `=>`
+separates `match` arms. `match`, `let`,
 `byte` and `short` are reserved for future use and cannot be used as
 names today. (`const` is not a keyword at all — constness comes from
 the second `=`/`:` of a declaration — so it reads as a plain

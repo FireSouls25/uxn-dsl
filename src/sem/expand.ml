@@ -40,6 +40,7 @@ let bound_names body =
       List.iter stmt e
     | While (_, b) -> List.iter stmt b
     | For (v, _, _, b) -> add v; List.iter stmt b
+    | Match (_, arms) -> List.iter (fun (_, b) -> List.iter stmt b) arms
     | Block ss -> List.iter stmt ss
     | Label n -> add n
     | _ -> ()
@@ -88,6 +89,9 @@ let rec subst_stmt psubst rename = function
          subst_expr psubst rename s, subst_expr psubst rename e,
          List.map (subst_stmt psubst rename) b)
   | Block ss -> Block (List.map (subst_stmt psubst rename) ss)
+  | Match (s, arms) ->
+    Match (subst_expr psubst rename s,
+      List.map (fun (p, b) -> (p, List.map (subst_stmt psubst rename) b)) arms)
   | VarDecl (n, t, i) -> VarDecl (rename_var rename n, t, opt_subst psubst rename i)
   | InferDecl (n, e) -> InferDecl (rename_var rename n, subst_expr psubst rename e)
   | ConstDecl (n, t, e) -> ConstDecl (rename_var rename n, t, subst_expr psubst rename e)
@@ -163,6 +167,31 @@ and expand_stmt macros guard = function
   | For (v, s, e, b) ->
     [For (v, expand_expr macros guard s, expand_expr macros guard e, expand_stmts macros guard b)]
   | Block ss -> [Block (expand_stmts macros guard ss)]
+  | Match (scrut, arms) ->
+    (* Proposal 3 v1: lower to a freshened temp + if/elif chain. The
+       temp (from the global expansion counter, so unique per
+       expansion) evaluates the scrutinee exactly once; InferDecl is
+       resolved later by the elaborator. A lone default arm is just
+       its body. *)
+    let scrut' = expand_expr macros guard scrut in
+    let arms' =
+      List.map (fun (p, b) -> (p, expand_stmts macros guard b)) arms
+    in
+    (match arms' with
+    | [(MDefault, body)] -> [Block body]
+    | (MInt n, first) :: rest ->
+      incr counter;
+      let tmp = "__match_" ^ string_of_int !counter in
+      let cond m = BinOp (Eq, Ident tmp, IntLit m) in
+      let rec split = function
+        | [] -> ([], [])
+        | (MInt m, b) :: tl ->
+          let (elifs, els) = split tl in ((cond m, b) :: elifs, els)
+        | (MDefault, b) :: _ -> ([], b)
+      in
+      let (elifs, els) = split rest in
+      [InferDecl (tmp, scrut'); If (cond n, first, elifs, els)]
+    | _ -> assert false)
   | VarDecl (n, t, i) -> [VarDecl (n, t, opt_expand macros guard i)]
   | InferDecl (n, e) -> [InferDecl (n, expand_expr macros guard e)]
   | ConstDecl (n, t, e) -> [ConstDecl (n, t, expand_expr macros guard e)]

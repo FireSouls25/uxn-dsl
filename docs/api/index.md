@@ -1,10 +1,11 @@
 # ETAL stdlib & abstraction index
 
-There is no linked standard library — an ETAL program is exactly its
+The `lib/` directory holds plain-ETAL modules (`fix16.ux`, `u32.ux`)
+imported file-relatively — no linking step, a program is exactly its
 own `.ux` sources plus what this reference documents. This index
-covers every callable abstraction in the language and the example
-corpus: builtins, devices, and every function, event, macro, group,
-dataset and buffer shipped in `examples/`.
+covers every callable abstraction in the language, the stdlib, and
+the example corpus: builtins, devices, and every function, event,
+macro, group, dataset and buffer shipped in `lib/` and `examples/`.
 
 ## How to grep this reference
 
@@ -26,6 +27,9 @@ bindings, then function locals/params, then globals, in splice order.
 
 - [Builtins](builtins.md) — `print`, `varvara.console.*`, and the
   `main ::` conventions (halting script vs event-loop game).
+- [Standard library](stdlib.md) — `lib/fix16.ux` (8.8 fixed point)
+  and `lib/u32.ux` (32-bit predicates), harnesses, and the
+  multi-return limitation behind their shapes.
 - [Devices](devices.md) — every `device` block and port in the
   corpus: System, Console (implicit), Screen, Controller, Mouse,
   DateTime.
@@ -45,6 +49,8 @@ bindings, then function locals/params, then globals, in splice order.
 | `varvara.console.read` | foreign fn | compiler | [builtins](builtins.md#varvaraconsoleread) |
 | `varvara.console.error` | foreign fn | compiler | [builtins](builtins.md#varvaraconsoleerror) |
 | `main ::` | entry convention | convention | [builtins](builtins.md#main) |
+| `x16_*` | fns + consts (8.8 fixed point) | `lib/fix16.ux` | [stdlib](stdlib.md#fix16ux) |
+| `u32_*` | fns (32-bit predicates) | `lib/u32.ux` | [stdlib](stdlib.md#u32ux) |
 | System / Screen / Controller / Mouse / DateTime / Console | devices | `devices.ux`, `worm.ux`, … | [devices](devices.md) |
 | `wrap` | fn (snake + 2 worm variants) | snake, worm, worm_full | [snake](snake.md#wrap), [stub](worm.md#wrap-wormux-stub), [full](worm.md#wrap-worm_fullux) |
 | `set_dir` | fn | snake `logic.ux` | [snake](snake.md#set_dir) |

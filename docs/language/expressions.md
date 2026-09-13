@@ -24,18 +24,23 @@ comparisons, which do not chain):
 | `%` | `DIVk MUL SUB` | `DIV2k MUL2 SUB2` | remainder idiom, no opcode |
 | `& \| ^` | `AND ORA EOR` | `AND2 ORA2 EOR2` | |
 | `== != < >` | `EQU NEQ LTH GTH` | `EQU2 NEQ2 LTH2 GTH2` | always `00`/`01` |
-| `<= >=` | `GTHk INC EQU` | `GTH2k INC2 EQU` | negated strict compare |
-| `&& \|\|` | `AND` / `ORA` | — | bitwise, both sides evaluated |
+| `<= >=` | `GTH #00 EQU` | `GTH2 #00 EQU` | negated strict compare, then test |
+| `&& \|\|` | `AND` / `ORA` | each side `#0000 NEQ2` first | total: any widths combine safely |
 | `<< n`, `>> n` | `SFT2` with folded `#n0`/`#0n` | same | amounts masked mod 16 |
 | `x << y` (dynamic) | `y #40 SFT` then `SFT2` | same | amount to high nibble |
-| `-x` | `#0000 SWP2 SUB2` | | wrap-around |
-| `~x` | `#ffff EOR2` | | |
-| `!x` | `#0000 EQU2` | | |
+| `-x` | `#00 SWP SUB` | `#0000 SWP2 SUB2` | width follows the operand |
+| `~x` | `#ff EOR` | `#ffff EOR2` | width follows the operand |
+| `!x` | `#00 EQU` | `#0000 EQU2` | width follows the operand |
 
 Comparisons (and only comparisons) use byte ops when both sides are
 bytes; everything else runs at short width with automatic promotion
-(`#00 SWP` zero-extends). Division and shifts are logical (unsigned);
-there are no signed operations, matching the hardware.
+(`#00 SWP` zero-extends) — except `-x`/`~x`/`!x`, which keep their
+operand's width, and `&&`/`||`, which reduce each side to one byte
+first. `if`/`while` conditions get the same treatment, so short
+conditions test the full value. Division and shifts are logical
+(unsigned); there are no signed operations, matching the hardware.
+A `-> u8` callee leaves one byte and callers compose accordingly;
+`return expr` is sized to the declared return type.
 
 ## Calls, indexing, fields
 
@@ -46,14 +51,17 @@ b = Controller.button;  ( device port load )
 tail[i] = v;            ( STA/STA2: value pushed first, address on top )
 v = tail[i + 1];        ( LDA/LDA2; u16 elements scale the index by 2 )
 p.x = p.x + 1;          ( group field access, same as devices )
+pts[i].x = nx;          ( struct row field: base + i*size, then offset )
 Screen.vector = &on_frame;  ( address-of a label )
 ```
 
-Call arguments are checked (arity plus `u8 → u16` widening) and
-promoted to the declared parameter sizes at the call site. Indexing
-needs a global array or buffer (locals are not indexable) and a
-`u8`/`u16` index. Assigning to a device or group field always
-type-checks — the port/field declaration is the contract.
+Call arguments are checked (arity plus `u8 → u16` widening,
+order-independent since signatures pre-pass) and promoted to the
+declared parameter sizes at the call site; calling an undefined
+function is a compile error. Indexing needs a global array or buffer
+(locals are not indexable) and a `u8`/`u16` index. Assigning to a
+device or group field always type-checks — the port/field
+declaration is the contract.
 
 ## Assignment
 

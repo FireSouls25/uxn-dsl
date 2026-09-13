@@ -23,6 +23,8 @@ let rec typ_size = function
   | Ast.TypArray (t, n) -> n * (typ_size t)
   | Ast.TypPointer _ -> 2
   | Ast.TypMod (b, _) -> typ_size b
+  | Ast.TypStruct _ ->
+    failwith "internal error: struct size needs the struct table (use resolve_size)"
 
 type codegen_env = {
   mutable global_vars: (string * var_info) list;
@@ -34,16 +36,26 @@ type codegen_env = {
   mutable data: Buffer.t;
   mutable strings: (string * string) list;
   mutable in_func: bool;
+  mutable in_event: bool;
   mutable func_name: string;
   mutable devices: (string * (string * int) list) list;
   mutable groups: (string * (string * int) list) list;
+  (* Structs: name -> [(field, offset, size)]. Offsets derive from
+     field sizes at declaration; v1 fields are scalar. *)
+  mutable structs: (string * (string * (int * int)) list) list;
   mutable constants: string list;
   mutable zero_order: zero_item list;
   mutable func_sigs: (string * int list) list;
+  (* Declared return widths for call-result sizing (proposal 9
+     pre-pass fills both tables). *)
+  mutable func_rets: (string * int) list;
+  mutable func_ret: int option;
   (* Main-RAM buffer region for `buffer` decls: base address plus
      next free address; (name, addr, size) in allocation order. *)
   mutable next_buffer_addr: int;
   mutable buffer_order: (string * int * int) list;
+  (* ROM metadata from `meta {}` (title, author), wired at boot. *)
+  mutable meta: (string * string) option;
   (* Zero-page bytes reserved so far (globals + spilled locals). *)
   mutable zp_used: int;
 }
@@ -61,14 +73,19 @@ let create_env () = {
   data = Buffer.create 1024;
   strings = [];
   in_func = false;
+  in_event = false;
   func_name = "";
   devices = [];
   groups = [];
+  structs = [];
   constants = [];
   zero_order = [];
   func_sigs = [];
+  func_rets = [];
+  func_ret = None;
   next_buffer_addr = buffer_region_base;
   buffer_order = [];
+  meta = None;
   zp_used = 0;
 }
 
@@ -85,6 +102,46 @@ let lookup_group_field env group field =
 
 let is_group env name =
   List.mem_assoc name env.groups
+
+(* (offset, size) of field f in struct s; raises Not_found, turned
+   into a directed error by callers. *)
+let struct_field env sname fname =
+  List.assoc fname (List.assoc sname env.structs)
+
+let is_struct_array env name =
+  try
+    let info =
+      try List.assoc name env.local_vars
+      with Not_found -> List.assoc name env.global_vars
+    in
+    (match info.typ with
+    | Ast.TypArray (Ast.TypStruct s, _) -> Some s
+    | _ -> None)
+  with Not_found -> None
+
+let is_struct_var env name =
+  try
+    let info =
+      try List.assoc name env.local_vars
+      with Not_found -> List.assoc name env.global_vars
+    in
+    (match info.typ with
+    | Ast.TypStruct s -> Some (s, info)
+    | _ -> None)
+  with Not_found -> None
+
+(* Size of a type that may name a struct (buffers of structs, struct
+   variables). Non-struct types use typ_size as before. *)
+let rec resolve_size env = function
+  | Ast.TypStruct s ->
+    let fields =
+      try List.assoc s env.structs
+      with Not_found -> failwith (Printf.sprintf "unknown struct `%s`" s)
+    in
+    List.fold_left (fun acc (_, (_, sz)) -> acc + sz) 0 fields
+  | Ast.TypArray (e, n) -> n * resolve_size env e
+  | Ast.TypMod (b, _) -> resolve_size env b
+  | t -> typ_size t
 
 let emit env fmt =
   let buf = if env.in_func then env.code else env.entry_code in
@@ -132,6 +189,8 @@ let start_func env name =
 
 let end_func env =
   env.in_func <- false;
+  env.in_event <- false;
+  env.func_ret <- None;
   env.local_vars <- []
 
 let add_local_var env name typ =
@@ -140,7 +199,7 @@ let add_local_var env name typ =
      absolute LDZ/STZ access there is no +/-127 relative range limit,
      so functions of any size work. Reservation is recorded in
      zero_order and emitted in the |00 block. *)
-  let size = typ_size typ in
+  let size = resolve_size env typ in
   let mangled = env.func_name ^ "__" ^ name in
   let info = { name; addr = mangled; is_local = true; typ; size } in
   env.local_vars <- (name, info) :: env.local_vars;
@@ -181,6 +240,13 @@ let rec expr_is_u8 env expr =
   | BinOp (Gt, _, _) | BinOp (Le, _, _) | BinOp (Ge, _, _)
   | BinOp (AndAnd, _, _) | BinOp (OrOr, _, _) -> true (* bool byte *)
   | UnOp (Not, _) -> true (* bool byte *)
+  (* Neg/NotBit preserve operand width (byte in -> byte out). *)
+  | UnOp ((Neg | NotBit), e) -> expr_is_u8 env e
+  (* A call leaves exactly what the callee declares: byte for `-> u8`
+     (or bool), short otherwise. Unknown callees keep the legacy
+     short assumption. *)
+  | Call (Ident n, _) ->
+    (try List.assoc n env.func_rets = 1 with Not_found -> false)
   | Index (Ident n, _) ->
     (try
        let info =
@@ -188,10 +254,25 @@ let rec expr_is_u8 env expr =
          with Not_found -> List.assoc n env.global_vars
        in
        (match info.typ with
-        | Ast.TypArray (elem, _) | Ast.TypPointer elem ->
-          (match elem with Ast.TypU8 | Ast.TypBool -> true | _ -> false)
-        | _ -> false)
+       | Ast.TypArray (elem, _) | Ast.TypPointer elem ->
+         (match elem with Ast.TypU8 | Ast.TypBool -> true | _ -> false)
+       | _ -> false)
      with Not_found -> false)
+  (* A byte struct field leaves exactly one byte (LDA/LDZ). *)
+  | Field (Index (Ident arr, _), fname) ->
+    (match is_struct_array env arr with
+    | Some sname ->
+      (match try Some (struct_field env sname fname) with Not_found -> None with
+      | Some (_, 1) -> true
+      | _ -> false)
+    | None -> false)
+  | Field (Ident v, fname) ->
+    (match is_struct_var env v with
+    | Some (sname, _) ->
+      (match try Some (struct_field env sname fname) with Not_found -> None with
+      | Some (_, 1) -> true
+      | _ -> false)
+    | None -> false)
   | _ -> false
 
 (* Reduce the on-stack value into [0, m): the existing `%` lowering
@@ -291,21 +372,38 @@ let rec codegen_expr env expr =
        | And -> if use8 then emit env "AND" else emit env "AND2"
        | Or -> if use8 then emit env "ORA" else emit env "ORA2"
        | Xor -> if use8 then emit env "EOR" else emit env "EOR2"
-       | Eq -> if use8 then emit env "EQU" else emit env "EQU2"
-       | Neq -> if use8 then emit env "NEQ" else emit env "NEQ2"
-       | Lt -> if use8 then emit env "LTH" else emit env "LTH2"
-       | Gt -> if use8 then emit env "GTH" else emit env "GTH2"
-       | Le -> if use8 then emit env "GTHk INC EQU" else emit env "GTH2k INC2 EQU"
-       | Ge -> if use8 then emit env "LTHk INC EQU" else emit env "LTH2k INC2 EQU"
-       | AndAnd -> emit env "AND"
-       | OrOr -> emit env "ORA"
+        | Eq -> if use8 then emit env "EQU" else emit env "EQU2"
+        | Neq -> if use8 then emit env "NEQ" else emit env "NEQ2"
+        | Lt -> if use8 then emit env "LTH" else emit env "LTH2"
+        | Gt -> if use8 then emit env "GTH" else emit env "GTH2"
+        (* a<=b is !(a>b): the comparison leaves one byte, EQU against
+           zero inverts it. (The old GTHk INC EQU shape compared the
+           wrong bytes — keep-mode leaves both operands.) *)
+        | Le -> if use8 then emit env "GTH #00 EQU" else emit env "GTH2 #00 EQU"
+        | Ge -> if use8 then emit env "LTH #00 EQU" else emit env "LTH2 #00 EQU"
+        | AndAnd ->
+          (* Total && / ||: each side reduces to one byte first, so
+             short comparisons combine without leaking stack bytes. *)
+          codegen_cond env left;
+          emit env " ";
+          codegen_cond env right;
+          emit env " AND"
+        | OrOr ->
+          codegen_cond env left;
+          emit env " ";
+          codegen_cond env right;
+          emit env " ORA"
        | _ -> ()))
   | UnOp (op, expr) ->
     codegen_expr env expr;
+    (* Byte operands need byte-width negation/complement/test —
+       and every arm needs its leading space (drifblim reads
+       `LDZ#0000` as one bad reference). *)
+    let byte = expr_is_u8 env expr in
     (match op with
-    | Neg -> emit env "#0000 SWP2 SUB2"
-    | NotBit -> emit env "#ffff EOR2"
-    | Not -> emit env "#0000 EQU2")
+    | Neg -> if byte then emit env " #00 SWP SUB" else emit env " #0000 SWP2 SUB2"
+    | NotBit -> if byte then emit env " #ff EOR" else emit env " #ffff EOR2"
+    | Not -> if byte then emit env " #00 EQU" else emit env " #0000 EQU2")
   | Call (func_expr, args) ->
     (* Check if this is a foreign function call *)
     let is_foreign_call = match func_expr with
@@ -394,16 +492,54 @@ let rec codegen_expr env expr =
     if esz = 1 then emit env "LDA" else emit env "LDA2"
   | Field (expr, field) ->
     (match expr with
-    | Ident base when is_device env base ->
-      (match lookup_device_port env base field with
-      | Some 2 -> emit env ".%s/%s DEI2" base field
-      | Some 1 -> emit env ".%s/%s DEI" base field
-      | _ -> emit env ".%s/%s DEI" base field)
-    | Ident base when is_group env base ->
-      (match lookup_group_field env base field with
-      | Some 2 -> emit env ".%s/%s LDZ2" base field
-      | Some 1 -> emit env ".%s/%s LDZ" base field
-      | _ -> emit env ".%s/%s LDZ2" base field)
+    | Index (Ident arr, index) ->
+      (match is_struct_array env arr with
+      | Some sname ->
+        (* Buffer/zp row field: absolute base + scaled index + field
+           offset, then sized load. *)
+        let elemsize = resolve_size env (Ast.TypStruct sname) in
+        let off, fsize =
+          try struct_field env sname field
+          with Not_found ->
+            failwith (Printf.sprintf "`%s` has no field `%s`" sname field)
+        in
+        emit env ";%s" arr;
+        emit env " ";
+        codegen_rhs env index 2;
+        if elemsize <> 1 then emit env " #%04x MUL2" elemsize;
+        emit env " ADD2";
+        if off <> 0 then emit env " #%04x ADD2" off;
+        emit env " ";
+        if fsize = 1 then emit env "LDA" else emit env "LDA2"
+      | None ->
+        (* Legacy fallthrough below handles devices/groups/plain. *)
+        codegen_expr env expr)
+    | Ident v ->
+      (match is_struct_var env v with
+      | Some (sname, info) ->
+        (* Zero-page row field: slot address + field offset. *)
+        let off, fsize =
+          try struct_field env sname field
+          with Not_found ->
+            failwith (Printf.sprintf "`%s` has no field `%s`" sname field)
+        in
+        let base = if info.is_local then info.addr else v in
+        emit env ".%s" base;
+        if off <> 0 then emit env " #%02x ADD" off;
+        emit env " ";
+        if fsize = 1 then emit env "LDZ" else emit env "LDZ2"
+      | None when is_device env v ->
+        (match lookup_device_port env v field with
+        | Some 2 -> emit env ".%s/%s DEI2" v field
+        | Some 1 -> emit env ".%s/%s DEI" v field
+        | _ -> emit env ".%s/%s DEI" v field)
+      | None when is_group env v ->
+        (match lookup_group_field env v field with
+        | Some 2 -> emit env ".%s/%s LDZ2" v field
+        | Some 1 -> emit env ".%s/%s LDZ" v field
+        | _ -> emit env ".%s/%s LDZ2" v field)
+      | None ->
+        codegen_expr env expr)
     | _ ->
       codegen_expr env expr)
   | AddrOf name ->
@@ -429,20 +565,60 @@ let rec codegen_expr env expr =
           emit env " .%s STZ2" name)
     | Field (field_expr, field_name) ->
       (match field_expr with
-      | Ident base when is_device env base ->
-        let sz = (match lookup_device_port env base field_name with Some s -> s | None -> 2) in
-        codegen_rhs env right sz;
-        (match lookup_device_port env base field_name with
-        | Some 2 -> emit env " .%s/%s DEO2" base field_name
-        | Some 1 -> emit env " .%s/%s DEO" base field_name
-        | _ -> emit env " .%s/%s DEO2" base field_name)
-      | Ident base when is_group env base ->
-        let sz = (match lookup_group_field env base field_name with Some s -> s | None -> 2) in
-        codegen_rhs env right sz;
-        (match lookup_group_field env base field_name with
-        | Some 2 -> emit env " .%s/%s STZ2" base field_name
-        | Some 1 -> emit env " .%s/%s STZ" base field_name
-        | _ -> emit env " .%s/%s STZ2" base field_name)
+      | Index (Ident arr, index) ->
+        (match is_struct_array env arr with
+        | Some sname ->
+          let elemsize = resolve_size env (Ast.TypStruct sname) in
+          let off, fsize =
+            try struct_field env sname field_name
+            with Not_found ->
+              failwith (Printf.sprintf "`%s` has no field `%s`" sname field_name)
+          in
+          (* STA wants value first, address on top. *)
+          codegen_rhs env right fsize;
+          emit env " ";
+          emit env ";%s" arr;
+          emit env " ";
+          codegen_rhs env index 2;
+          if elemsize <> 1 then emit env " #%04x MUL2" elemsize;
+          emit env " ADD2";
+          if off <> 0 then emit env " #%04x ADD2" off;
+          emit env " ";
+          if fsize = 1 then emit env "STA" else emit env "STA2"
+        | None ->
+          codegen_expr env right;
+          emit env " #0000")
+      | Ident v ->
+        (match is_struct_var env v with
+        | Some (sname, info) ->
+          let off, fsize =
+            try struct_field env sname field_name
+            with Not_found ->
+              failwith (Printf.sprintf "`%s` has no field `%s`" sname field_name)
+          in
+          let base = if info.is_local then info.addr else v in
+          codegen_rhs env right fsize;
+          emit env " .%s" base;
+          if off <> 0 then emit env " #%02x ADD" off;
+          emit env " ";
+          if fsize = 1 then emit env "STZ" else emit env "STZ2"
+        | None when is_device env v ->
+          let sz = (match lookup_device_port env v field_name with Some s -> s | None -> 2) in
+          codegen_rhs env right sz;
+          (match lookup_device_port env v field_name with
+          | Some 2 -> emit env " .%s/%s DEO2" v field_name
+          | Some 1 -> emit env " .%s/%s DEO" v field_name
+          | _ -> emit env " .%s/%s DEO2" v field_name)
+        | None when is_group env v ->
+          let sz = (match lookup_group_field env v field_name with Some s -> s | None -> 2) in
+          codegen_rhs env right sz;
+          (match lookup_group_field env v field_name with
+          | Some 2 -> emit env " .%s/%s STZ2" v field_name
+          | Some 1 -> emit env " .%s/%s STZ" v field_name
+          | _ -> emit env " .%s/%s STZ2" v field_name)
+        | None ->
+          codegen_expr env right;
+          emit env " #0000")
       | _ ->
         codegen_expr env right;
         emit env " #0000")
@@ -487,12 +663,12 @@ and index_array_info env arr =
          try List.assoc n env.local_vars
          with Not_found -> List.assoc n env.global_vars
        in
-       (match info.typ with
+        (match info.typ with
         | Ast.TypArray (elem, _) ->
           if info.is_local then
             failwith (Printf.sprintf
               "array `%s` is a local; only global arrays and buffers can be indexed" n);
-          (typ_size elem, true)
+          (resolve_size env elem, true)
         | Ast.TypPointer elem -> (typ_size elem, false)
         | _ -> failwith (Printf.sprintf "`%s` is not an array" n))
      with Not_found ->
@@ -508,26 +684,43 @@ and codegen_index_addr env arr index =
    | _ -> codegen_expr env arr);
   emit env " ";
   codegen_rhs env index 2;
-  if elem_size = 2 then emit env " #0002 MUL2";
+  (* Scale by element size (bytes need none). Same bytes as before
+     for 1- and 2-byte elements; struct rows scale by row size. *)
+  if elem_size <> 1 then emit env " #%04x MUL2" elem_size;
   emit env " ADD2";
   elem_size
 
-let rec codegen_stmt env stmt =
-  match stmt with
+(* Total conditions (proposal 8): JCI tests one byte, so a short
+   condition would test only its low byte and leak the high one. Reduce
+   to a single byte unless the expression provably leaves exactly one
+   (comparisons, `!`, byte vars/ports/elements). Raw literals have
+   unknowable width — left alone. *)
+and codegen_cond env = function
+  | RawLit _ as e -> codegen_expr env e
+  | e ->
+    codegen_expr env e;
+    if expr_is_u8 env e then () else emit env " #0000 NEQ2"
+
+let rec codegen_stmt env stmt =  match stmt with
   | ExprStmt expr ->
     codegen_expr env expr;
     emit env "\n"
   | Return None ->
-    emit env "JMP2r\n"
+    (* Proposal 2: vectors are never JSR-called, so a bare return in an
+       event pops a bogus address with JMP2r — BRK hands control back
+       to the emulator instead. Plain functions keep JMP2r. *)
+    if env.in_event then emit env "BRK\n" else emit env "JMP2r\n"
   | Return (Some expr) ->
-    codegen_expr env expr;
+    (match env.func_ret with
+    | Some sz -> codegen_rhs env expr sz
+    | None -> codegen_expr env expr);
     emit env " JMP2r\n"
   | If (condition, then_body, elifs, else_body) ->
     let then_label = new_local_label env "if_then" in
     let else_label = new_local_label env "if_else" in
     let end_label = new_local_label env "if_end" in
 
-    codegen_expr env condition;
+    codegen_cond env condition;
     emit env " ?&%s\n" then_label;
     if List.length elifs > 0 || List.length else_body > 0 then
       emit env " !&%s\n" else_label
@@ -541,7 +734,7 @@ let rec codegen_stmt env stmt =
       List.iter (fun (cond, body) ->
         let elif_then = new_local_label env "elif_then" in
         let elif_else = new_local_label env "elif_else" in
-        codegen_expr env cond;
+        codegen_cond env cond;
         emit env " ?&%s\n" elif_then;
         emit env " !&%s\n" elif_else;
         emit env "&%s\n" elif_then;
@@ -563,7 +756,7 @@ let rec codegen_stmt env stmt =
        &loop <cond> ?&cont !&end &cont <body> !&loop &end
        (JCI pops bool; true -> body, false -> end) *)
     emit env "&%s\n" loop_label;
-    codegen_expr env condition;
+    codegen_cond env condition;
     emit env " ?&%s\n" cont_label;
     emit env " !&%s\n" end_label;
     emit env "&%s\n" cont_label;
@@ -575,13 +768,28 @@ let rec codegen_stmt env stmt =
     (* init var to start (promote to short) *)
     codegen_rhs env start_expr 2;
     emit env " .%s STZ2\n" addr;
+    (* Proposal 14: a syntactically pure end bound (literal, variable,
+       constant) is evaluated once into a hidden temp instead of every
+       iteration. Anything that could call or store keeps the old
+       evaluate-each-time semantics. Note the temp freezes the entry
+       value: a body that assigns to the bound variable observes the
+       entry value, not the mutation. *)
+    let end_load =
+      match end_expr with
+      | IntLit _ | Ident _ ->
+        let tmp = add_local_var env (new_local_label env "for_end") Ast.TypU16 in
+        codegen_rhs env end_expr 2;
+        emit env " .%s STZ2\n" tmp;
+        (fun () -> emit env ".%s LDZ2" tmp)
+      | _ -> (fun () -> codegen_rhs env end_expr 2)
+    in
     let loop_label = new_local_label env "for" in
     let cont_label = new_local_label env "for_cont" in
     let end_label = new_local_label env "for_end" in
     (* for i in start..end == while(i < end) { body; i++ } *)
     emit env "&%s\n" loop_label;
     emit env ".%s LDZ2 " addr;
-    codegen_rhs env end_expr 2;
+    end_load ();
     emit env " LTH2 ?&%s\n" cont_label;
     emit env " !&%s\n" end_label;
     emit env "&%s\n" cont_label;
@@ -591,13 +799,15 @@ let rec codegen_stmt env stmt =
     emit env "&%s\n" end_label
   | Block stmts ->
     List.iter (codegen_stmt env) stmts
+  | Match _ ->
+    failwith "internal error: unexpanded match reached codegen"
   | VarDecl (name, typ, init) ->
     if env.in_func then begin
       (* Local variable - zero-page slot under a mangled name *)
       let addr = add_local_var env name typ in
       match init with
       | Some expr ->
-        let size = typ_size typ in
+        let size = resolve_size env typ in
         codegen_rhs env expr size;
         emit_mod_reduce env typ;
         if size = 1 then emit env " .%s STZ\n" addr else emit env " .%s STZ2\n" addr
@@ -605,7 +815,7 @@ let rec codegen_stmt env stmt =
     end else begin
       (* Global variable - use zero-page addressing (label form;
          the `$hh` address string below is bookkeeping only). *)
-      let size = typ_size typ in
+      let size = resolve_size env typ in
       let _addr =
         try (List.assoc name env.global_vars).addr
         with Not_found ->
@@ -637,7 +847,7 @@ let rec codegen_stmt env stmt =
       emit_mod_reduce env typ;
       emit env " .%s STZ2\n" addr
     end else begin
-      let size = typ_size typ in
+      let size = resolve_size env typ in
       let _addr =
         try (List.assoc name env.global_vars).addr
         with Not_found ->
@@ -667,6 +877,20 @@ let rec codegen_stmt env stmt =
         (try (try List.assoc name env.local_vars with Not_found -> List.assoc name env.global_vars).size
          with Not_found -> 2)
       | IntLit n -> if n <= 255 then 1 else 2
+      | Field (Index (Ident arr, _), fname) ->
+        (match is_struct_array env arr with
+        | Some sname ->
+          (match try Some (struct_field env sname fname) with Not_found -> None with
+          | Some (_, sz) -> sz
+          | None -> 2)
+        | None -> 2)
+      | Field (Ident v, fname) ->
+        (match is_struct_var env v with
+        | Some (sname, _) ->
+          (match try Some (struct_field env sname fname) with Not_found -> None with
+          | Some (_, sz) -> sz
+          | None -> 2)
+        | None -> 2)
       | _ -> 2
     in
     if size = 1 then emit env " STH\n" else emit env " STH2\n"
@@ -680,15 +904,20 @@ let rec codegen_stmt env stmt =
     emit env "%s\n" s
 
 let codegen_func env (fn_def : Ast.func) =
-  (* Record signature for call-site arg promotion (u8 literal -> short). *)
-  env.func_sigs <- (fn_def.name, List.map (fun (p: Ast.param) -> typ_size p.typ) fn_def.params) :: env.func_sigs;
   Buffer.add_string env.code (sprintf "\n@%s ( -- )\n" fn_def.name);
   start_func env fn_def.name;
+  env.in_event <- fn_def.is_event;
+  (* Size `return expr` to the declared width so callers read exactly
+     what the signature promises (byte callees compose). *)
+  env.func_ret <-
+    (match fn_def.return_typ with
+    | Some t -> Some (resolve_size env t)
+    | None -> None);
   (* Handle params: store from stack to zero-page slots. A mod-typed
      param is reduced on entry, so callers may pass plain values. *)
   List.iter (fun (p: Ast.param) ->
     let addr = add_local_var env p.name p.typ in
-    let size = typ_size p.typ in
+    let size = resolve_size env p.typ in
     emit_mod_reduce env p.typ;
     if size = 1 then
       Buffer.add_string env.code (sprintf "    .%s STZ\n" addr)
@@ -762,6 +991,18 @@ let codegen_program program =
      HALT and never executed. The call sequence is emitted after the
      decl loop for exactly this reason. *)
 
+  (* Proposal 9: record every signature up front so forward calls get
+     argument promotion too — the checker pre-pass makes them valid,
+     this makes them correctly sized. Return widths make call results
+     composable (a `-> u8` callee leaves one byte, not two). *)
+  List.iter (function
+    | FuncDecl f ->
+      env.func_sigs <- (f.name, List.map (fun (p: Ast.param) -> resolve_size env p.typ) f.params) :: env.func_sigs;
+      (match f.return_typ with
+      | Some t -> env.func_rets <- (f.name, resolve_size env t) :: env.func_rets
+      | None -> ())
+    | _ -> ()) program;
+
   List.iter (fun decl ->
     match decl with
     | FuncDecl f ->
@@ -775,7 +1016,7 @@ let codegen_program program =
       (* Unreachable: Elab.elaborate_program rewrites `:=` before codegen. *)
       failwith "internal error: unelaborated global `:=` reached codegen"
     | GlobalVarDecl (name, typ, init) ->
-      let size = typ_size typ in
+      let size = resolve_size env typ in
       let _addr =
         try (List.assoc name env.global_vars).addr
         with Not_found ->
@@ -811,7 +1052,7 @@ let codegen_program program =
       (* Explicit-type constant: zero-page storage slot initialized
          once (assignments are rejected by the checker), read as a
          normal variable — unlike `::` label constants above. *)
-      let size = typ_size typ in
+      let size = resolve_size env typ in
       let _addr =
         try (List.assoc name env.global_vars).addr
         with Not_found ->
@@ -868,8 +1109,7 @@ let codegen_program program =
         env.global_vars <- (g.group_name, base_info) :: env.global_vars
       end
     | DataDecl d ->
-      Buffer.add_string env.data (sprintf "@%s [ " d.data_name);
-      List.iter (fun b -> Buffer.add_string env.data (sprintf "%02x " b)) d.data_bytes;
+      Buffer.add_string env.data (sprintf "@%s [ " d.data_name);      List.iter (fun b -> Buffer.add_string env.data (sprintf "%02x " b)) d.data_bytes;
       Buffer.add_string env.data "]\n"
     | AssetDecl a ->
       let bytes = read_asset_bytes a.asset_name a.asset_path in
@@ -880,6 +1120,7 @@ let codegen_program program =
       let esz = (match b.buf_elem with
         | Ast.TypU8 | Ast.TypBool -> 1
         | Ast.TypU16 -> 2
+        | Ast.TypStruct s -> resolve_size env (Ast.TypStruct s)
         | _ -> failwith (Printf.sprintf "buffer `%s` must hold u8/u16/bool" b.buf_name)) in
       let total = esz * b.buf_len in
       let addr = env.next_buffer_addr in
@@ -890,6 +1131,25 @@ let codegen_program program =
       let info = { name = b.buf_name; addr = sprintf "$%04x" addr;
         is_local = false; typ = Ast.TypArray (b.buf_elem, b.buf_len); size = total } in
       env.global_vars <- (b.buf_name, info) :: env.global_vars
+    | MetaDecl (title, author) ->
+      (* Recorded; the blob + boot wiring emit after the decl loop
+         (needs the final device table state — see below). The loader
+         already rejects a second `meta {}` anywhere in the splice. *)
+      (match env.meta with
+      | Some _ -> failwith "duplicate meta block"
+      | None -> env.meta <- Some (title, author))
+    | StructDecl s ->
+      (* Type-level only: field (offset, size) table for `.field`
+         access. The checker validated fields and order; holders were
+         already allocated by size. Fields are scalar, so typ_size
+         cannot fail here. *)
+      let (_, fields) =
+        List.fold_left (fun (off, acc) (fname, ftyp) ->
+          let sz = typ_size ftyp in
+          (off + sz, (fname, (off, sz)) :: acc)
+        ) (0, []) s.struct_fields
+      in
+      env.structs <- (s.struct_name, List.rev fields) :: env.structs
     | RawDecl raw ->
       (* Emitted with the data section (main RAM): raw blocks usually
          define data/tables, which drifblim forbids in zero-page.
@@ -901,6 +1161,28 @@ let codegen_program program =
 
   (* Entry sequence comes last in entry_code so global initializers
      above actually run (see note at `|0100`). *)
+  (* ROM metadata (proposal 15): blob in the data section plus a
+     boot-time `System/metadata` write, per the Varvara convention
+     (`@meta 00 "Title 0a "Author 00`, trailing `$2` reserve). The
+     System device table is emitted only if the program didn't declare
+     its own System device. *)
+  (match env.meta with
+  | None -> ()
+  | Some (title, author) ->
+    if not (List.mem_assoc "System" env.devices) then begin
+      Buffer.add_string env.func_code "|00 @System/vector $2 &expansion $2 &wst $1 &rst $1 &metadata $2 &r $2 &g $2 &b $2 &debug $1 &state $1\n";
+      env.devices <- ("System",
+        ["vector", 2; "expansion", 2; "wst", 1; "rst", 1; "metadata", 2;
+         "r", 2; "g", 2; "b", 2; "debug", 1; "state", 1]) :: env.devices
+    end;
+    let hex_of s =
+      let b = Buffer.create (String.length s * 3) in
+      String.iter (fun c -> Buffer.add_string b (sprintf "%02x " (Char.code c))) s;
+      Buffer.contents b
+    in
+    Buffer.add_string env.data
+      (sprintf "@etal_meta [ 00 %s0a %s00 $2 ]\n" (hex_of title) (hex_of author));
+    Buffer.add_string env.entry_code ";etal_meta .System/metadata DEO2\n");
   Buffer.add_string env.entry_code ";main JSR2\n";
   Buffer.add_string env.entry_code "HALT\n";
   Buffer.add_string env.entry_code "BRK\n\n";

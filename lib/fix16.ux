@@ -1,0 +1,263 @@
+( lib/fix16.ux — 8.8 signed fixed point over u16 shorts.
+  Modeled on fix16.tal (dashes become underscores, same value
+  domain): implicit denominator 256, range -128 <= x < 128,
+  #8000 is invalid input. Operations saturate at #7fff/#8001
+  instead of wrapping; division by zero saturates; negative
+  quotients truncate toward zero (like fix16.tal, unlike floor).
+  Two intentional divergences from fix16.tal, both fixes:
+  floor(-0.5) is -1 (theirs clears the low byte giving -2),
+  round saturates 127.5 to #7fff (theirs wraps to #8000).
+  Trig/log/sqrt/tables are future work (they need a short-blob
+  story); everything here is closed u16 arithmetic.
+  Import with: import "../lib/fix16.ux" (path relative to your file). )
+
+X16_ZERO :: 0;
+X16_ONE :: 256;
+X16_MINUS_ONE :: 65280;
+X16_PI :: 804;
+X16_HALF_PI :: 402;
+X16_E :: 696;
+X16_MAXIMUM :: 32767;
+X16_MINIMUM :: 32769;
+
+x16_add :: fn(x: u16, y: u16) -> u16 {
+    return x + y;
+}
+
+x16_sub :: fn(x: u16, y: u16) -> u16 {
+    return x - y;
+}
+
+x16_neg :: fn(x: u16) -> u16 {
+    return 0 - x;
+}
+
+( exact unsigned core: result = (x*y)>>8 mod 65536 needs no
+  carries — only the saturation predicate needs care. )
+x16_mul_unsigned :: fn(x: u16, y: u16) -> u16 {
+    x0: u16 = x & 255;
+    x1: u16 = (x >> 8) & 255;
+    y0: u16 = y & 255;
+    y1: u16 = (y >> 8) & 255;
+    t1: u16 = x1 * y1;
+    s: u16 = x1 * y0;
+    t: u16 = x0 * y1;
+    S: u16 = s + t;
+    c: u16 = 0;
+    if S < s {
+        c = 1;
+    }
+    t3: u16 = x0 * y0;
+    t3hi: u16 = (t3 >> 8) & 255;
+    if t1 > 127 {
+        return 32767;
+    }
+    K: u16 = 32768 - t1 * 256;
+    if c == 1 {
+        return 32767;
+    }
+    w: u16 = S + t3hi;
+    if w < S {
+        return 32767;
+    }
+    if w >= K {
+        return 32767;
+    }
+    t1m: u16 = t1 & 255;
+    r: u16 = (t1m << 8) + S;
+    r = r + t3hi;
+    return r;
+}
+
+x16_mul :: fn(x: u16, y: u16) -> u16 {
+    neg: u16 = 0;
+    if x > 32767 {
+        x = 0 - x;
+        neg = 1 - neg;
+    }
+    if y > 32767 {
+        y = 0 - y;
+        neg = 1 - neg;
+    }
+    r: u16 = x16_mul_unsigned(x, y);
+    if neg == 1 {
+        r = 0 - r;
+    }
+    return r;
+}
+
+( exact restoring division: 8 quotient bits, rem < y invariant,
+  so no 17-bit value ever forms. )
+x16_div_unsigned :: fn(x: u16, y: u16) -> u16 {
+    if (x >> 7) >= y {
+        return 32767;
+    }
+    qhi: u16 = x / y;
+    rem: u16 = x % y;
+    qlo: u16 = 0;
+    for i in 0..8 {
+        qlo = qlo * 2;
+        diff: u16 = y - rem;
+        if rem >= diff {
+            rem = rem - diff;
+            qlo = qlo + 1;
+        } else {
+            rem = rem + rem;
+        }
+    }
+    return (qhi << 8) + qlo;
+}
+
+x16_div :: fn(x: u16, y: u16) -> u16 {
+    neg: u16 = 0;
+    if x > 32767 {
+        x = 0 - x;
+        neg = 1 - neg;
+    }
+    if y > 32767 {
+        y = 0 - y;
+        neg = 1 - neg;
+    }
+    r: u16 = x16_div_unsigned(x, y);
+    if neg == 1 {
+        r = 0 - r;
+    }
+    return r;
+}
+
+x16_eq :: fn(x: u16, y: u16) -> bool {
+    return x == y;
+}
+
+x16_ne :: fn(x: u16, y: u16) -> bool {
+    return x != y;
+}
+
+x16_lt :: fn(x: u16, y: u16) -> bool {
+    xneg: bool = x > 32767;
+    yneg: bool = y > 32767;
+    if xneg != yneg {
+        return xneg;
+    }
+    if xneg {
+        return x > y;
+    }
+    return x < y;
+}
+
+x16_lteq :: fn(x: u16, y: u16) -> bool {
+    xneg: bool = x > 32767;
+    yneg: bool = y > 32767;
+    if xneg != yneg {
+        return xneg;
+    }
+    if xneg {
+        return x >= y;
+    }
+    return x <= y;
+}
+
+x16_gt :: fn(x: u16, y: u16) -> bool {
+    xneg: bool = x > 32767;
+    yneg: bool = y > 32767;
+    if xneg != yneg {
+        return yneg;
+    }
+    if xneg {
+        return x < y;
+    }
+    return x > y;
+}
+
+x16_gteq :: fn(x: u16, y: u16) -> bool {
+    xneg: bool = x > 32767;
+    yneg: bool = y > 32767;
+    if xneg != yneg {
+        return yneg;
+    }
+    if xneg {
+        return x <= y;
+    }
+    return x >= y;
+}
+
+x16_min :: fn(x: u16, y: u16) -> u16 {
+    if x16_lt(x, y) {
+        return x;
+    }
+    return y;
+}
+
+x16_max :: fn(x: u16, y: u16) -> u16 {
+    if x16_gt(x, y) {
+        return x;
+    }
+    return y;
+}
+
+x16_is_whole :: fn(x: u16) -> bool {
+    return (x & 255) == 0;
+}
+
+( whole units 0..127; larger saturate (negatives aren't ints). )
+x16_from_int :: fn(n: u16) -> u16 {
+    if n > 127 {
+        return 32767;
+    }
+    return n << 8;
+}
+
+( truncate toward zero, as a u16 bit pattern: -1 is 65535. )
+x16_to_int :: fn(x: u16) -> u16 {
+    if x > 32767 {
+        mag: u16 = 0 - x;
+        return 0 - (mag >> 8);
+    }
+    return x >> 8;
+}
+
+( exact everywhere, including negatives (unlike clearing the byte,
+  which overshoots past the floor). )
+x16_floor :: fn(x: u16) -> u16 {
+    if x > 32767 {
+        mag: u16 = 0 - x;
+        if (mag & 255) == 0 {
+            return x;
+        }
+        if mag > 32512 {
+            return 32769;
+        }
+        return 0 - ((mag + 255) & 65280);
+    }
+    return x & 65280;
+}
+
+x16_ceil :: fn(x: u16) -> u16 {
+    if (x > 32512) && (x < 32768) {
+        return 32767;
+    }
+    return (x + 255) & 65280;
+}
+
+( round half to even; 127.5 saturates (128 is unrepresentable). )
+x16_round :: fn(x: u16) -> u16 {
+    lo: u16 = x & 255;
+    hi: u16 = (x >> 8) & 255;
+    base: u16 = x & 65280;
+    if lo < 128 {
+        return base;
+    }
+    if lo > 128 {
+        if base == 32512 {
+            return 32767;
+        }
+        return base + 256;
+    }
+    if (hi & 1) == 1 {
+        if base == 32512 {
+            return 32767;
+        }
+        return base + 256;
+    }
+    return base;
+}

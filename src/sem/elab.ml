@@ -58,9 +58,13 @@ let elaborate_program program =
   let global_env = Types.create_env None in
   Types.add_func global_env "print"
     [{ name = "msg"; typ = TypPointer TypU8 }] None;
+  (* Proposal 9: signatures first, so inferred initializers can call
+     functions defined later in the file — mirroring the checker. *)
+  List.iter (function
+    | FuncDecl f -> Types.add_func global_env f.name f.params f.return_typ
+    | _ -> ()) program;
   List.map (function
     | FuncDecl f as d ->
-      Types.add_func global_env f.name f.params f.return_typ;
       let fenv = Types.create_env (Some global_env) in
       List.iter (fun (p : param) -> Types.add_var fenv p.name p.typ) f.params;
       (match d with
@@ -95,6 +99,11 @@ let elaborate_program program =
       d
     | BufferDecl b as d ->
       Types.add_var global_env b.buf_name (TypArray (b.buf_elem, b.buf_len));
+      d
+    | StructDecl s as d ->
+      (* Register for field-type inference below; the checker
+         validates fields and order. *)
+      Types.add_struct global_env s.struct_name s.struct_fields;
       d
     | _ as d -> d
   ) program

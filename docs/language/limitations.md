@@ -10,6 +10,9 @@ not are marked **footgun**.
   so a function calling itself (or an event interrupting a function
   that shares its locals) corrupts state. The compiler does not check
   this — **footgun**; keep call graphs acyclic.
+- **Valued functions must `return expr` explicitly.** Falling off the
+  end leaves whatever is on the stack; callers read the declared
+  width, so an omitted return is garbage, not zero — **footgun**.
 - **256-byte zero-page budget**, shared by globals, groups and all
   spilled locals. Overflow is a compile error naming the byte count.
 - **Buffers live at fixed addresses** from `0x2000` upward and must
@@ -24,11 +27,15 @@ not are marked **footgun**.
 - **No implicit narrowing.** A `u16` never silently becomes a `u8`;
   only `varvara.console.write/error` truncate (low byte). Restructure
   or mask instead.
-- **Bare-`u16` conditions are wrong**: `while counter` tests only the
-  low byte and leaves a byte on the stack — **footgun**. Always write
-  a comparison (`while counter != 0`).
-- **`for` bounds re-evaluate every iteration** and the loop variable
-  is always `u16`, even over `u8` ranges.
+- **Bare-`u16` conditions are total now**: a short condition is
+  reduced with `#0000 NEQ2`, so the full value is tested and no byte
+  leaks. (Raw `raw`-literal conditions are exempt — their width is
+  unknowable — and `&&` / `||` stay bitwise, below.)
+- **`for` end bounds**: syntactically pure bounds (literals,
+  variables, constants) evaluate once up front; anything that could
+  call or store re-evaluates every iteration. A body that assigns to
+  a pure bound variable still iterates to the entry value. The loop
+  variable is always `u16`, even over `u8` ranges.
 - **Integers are 0–65535, unsigned.** No negatives, no signed shifts
   or division (right shifts are logical; `x - y` wraps). Division and
   modulo by zero yield zero, per Uxn semantics.
@@ -39,14 +46,24 @@ not are marked **footgun**.
   the emitted hex is garbage. (Assets are validated as whole tiles.)
 - **Data blobs are not indexable** — take `&blob` and do address
   arithmetic, or copy bytes into a buffer first.
+- **Structs are v1**: scalar `u8`/`u16`/`bool` fields only (no
+  nesting, `mod`, arrays or pointers); no struct params, returns,
+  or whole-value operations (assign/compare/pass/return a struct
+  and the compiler tells you to use fields); struct types must be
+  declared before use. `match` is desugared dispatch (no jump
+  tables) over integer literals plus trailing `_`.
 - **Constants only carry values** for integer and identifier forms;
   anything else degrades to `|0000`.
 
 ## Order and placement
 
-- **Define functions before use.** Signatures are recorded in order,
-  so a forward call skips arity checks and argument promotion.
-  (Macros are the exception: collected whole-program first.)
+- **Define-before-use is gone for calls, not for recursion.**
+  Function signatures are collected whole-program before checking, so
+  forward calls get full arity, type and promotion checking. Calling
+  an undefined function is a compile error. Recursion (direct or
+  mutual) still assembles but corrupts static locals at runtime —
+  keep call graphs acyclic. (Macros were already order-independent:
+  collected whole-program first.)
 - **Macro bodies cannot capture caller locals** (params, globals and
   their own locals only); a statement-macro `return <expr>;` discards
   the value, a bare `return;` returns from the caller.
@@ -60,10 +77,10 @@ not are marked **footgun**.
   reads `addr`/`x`/`y`/`auto` at the moment `sprite` is written, so
   reordering those assignments draws wrong — the compiler does not
   check this. Keep each blit in one reviewed macro or function.
-- **Bare `return;` in an `event` emits `JMP2r`, not `BRK`.**
-  Vectors are never `JSR`-called, so that pops a bogus return
-  address — use `brk;` for early exits until `return;` is taught
-  the difference (see [proposals](proposals.md)).
+- **Valued `return x;` in an `event` still emits `JMP2r`.** Bare
+  `return;` is safe (emits `BRK`), but returning a value from a
+  vector pops a bogus address — vectors are never `JSR`-called.
+  Restructure so events only use bare returns.
 
 ## Surface gaps
 
