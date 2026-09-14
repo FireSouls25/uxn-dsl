@@ -41,8 +41,11 @@ visible/solid/layer bits. `obj_spawn/move/hide/hide_all/free`,
 `obj_draw`/`draw_all` (macros), `obj_draw_mode` (explicit sprite
 mode per object), `draw_all_layered` (gameplay layers 0–3 back to
 front, so high slots never overdraw foreground), `OBJ_*` consts.
-Animation is frame tables plus per-object base/len/rate/tick with
-`anim_play/step`.
+Animation is an `Anim` row per object (base/len/rate/tick/mode/
+playing) over a shared frame table: `anim_play` (looping),
+`anim_play_mode` (`ANIM_LOOP/ONCE/PINGPONG` — once holds the last
+frame and stops, ping-pong bounces), `anim_stop/start/playing`,
+`anim_step` (stopped rows freeze with the tile untouched).
 
 ## collide.ux, scene.ux, menu.ux, mouse.ux, mouse.ux
 

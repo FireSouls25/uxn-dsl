@@ -77,7 +77,9 @@ Megalovania migrated). Mouse: `lib/mouse.ux` edge polls
 Mouse block, synthetic-state gate. Arrays: same-type/length whole
 copy with `=` (assign + init); every other whole-array use is a
 compile error. Scenes: pause stack (`scene_push/pop`), `scene_prev`,
-layered drawing (`draw_all_layered`, `obj_draw_mode`). Software
+layered drawing (`draw_all_layered`, `obj_draw_mode`). Animation:
+`Anim` rows with `LOOP/ONCE/PINGPONG` modes, `anim_stop/start`
+freeze/resume plus `anim_playing` query. Software
 3D: `trig.ux`
 (self-built turns256 sine table) and `gfx3d.ux` (rotate/project/DDA
 wireframe) with a spinning-cube demo. Dead-function elimination

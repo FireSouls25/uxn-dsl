@@ -59,7 +59,7 @@ bindings, then function locals/params, then globals, in splice order.
 | `draw_char`, `draw_string`, `glyph_clamp/addr` | macros + data + fns (text) | `lib/font.ux` | [stdlib](stdlib.md#fontux) |
 | `screen_size`, `blit`, `clear`, `theme`, `SPRITE_*`, `PIXEL_*` | macros/consts (screen) | `lib/screen.ux` | [stdlib](stdlib.md#screenux) |
 | `obj_spawn/move/hide/draw`, `draw_all`, `OBJ_*` | fns/macros (objects) | `lib/object.ux` | [stdlib](stdlib.md#objectux-animux) |
-| `anim_play/step` | fns (animation) | `lib/anim.ux` | [stdlib](stdlib.md#objectux-animux) |
+| `anim_play(_mode)/step/stop/start/playing`, `ANIM_*` | fns + struct (animation) | `lib/anim.ux` | [stdlib](stdlib.md#objectux-animux) |
 | `layers_hit`, `obj_cell_hit`, `obj_aabb_hit` | fns (collision) | `lib/collide.ux` | [stdlib](stdlib.md#collideux-sceneux-menuux-mouseux) |
 | `scene_go/push/pop`, `wipe`, `menu_poll/items/next/prev` | fns/macros (scenes+menus) | `lib/scene.ux`, `lib/menu.ux` | [stdlib](stdlib.md#collideux-sceneux-menuux-mouseux) |
 | `mouse_poll`, `MOUSE_*` | fn + consts (mouse edges) | `lib/mouse.ux` | [stdlib](stdlib.md#collideux-sceneux-menuux-mouseux) |
