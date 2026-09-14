@@ -29,6 +29,7 @@ type token =
   
   (* Keywords *)
   | FN
+  | ASSERT
   | EVENT
   | RETURN
   | IF
@@ -124,6 +125,7 @@ let token_to_string = function
   | STRING_LITERAL s -> Printf.sprintf "\"%s\"" s
   | IDENT s -> s
   | FN -> "fn"
+  | ASSERT -> "assert"
   | EVENT -> "event"
   | RETURN -> "return"
   | IF -> "if"

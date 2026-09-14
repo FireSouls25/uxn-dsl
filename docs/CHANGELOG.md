@@ -77,7 +77,11 @@ Megalovania migrated). Mouse: `lib/mouse.ux` edge polls
 Mouse block, synthetic-state gate. Arrays: same-type/length whole
 copy with `=` (assign + init); every other whole-array use is a
 compile error. Scenes: pause stack (`scene_push/pop`), `scene_prev`,
-layered drawing (`draw_all_layered`, `obj_draw_mode`). Animation:
+layered drawing (`draw_all_layered`, `obj_draw_mode`). Diagnostics:
+`file:line:col` errors with source echo and clean `etal: error:`
+exit-1 (declaration granularity in the checker); `assert E;`
+halts with a baked location, gated both passing and failing.
+Animation:
 `Anim` rows with `LOOP/ONCE/PINGPONG` modes, `anim_stop/start`
 freeze/resume plus `anim_playing` query. Software
 3D: `trig.ux`

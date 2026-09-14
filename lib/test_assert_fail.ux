@@ -1,0 +1,6 @@
+( failing-assert probe: halts after printing the baked location.
+  The gate builds expected bytes from its own path; keep the
+  assert on line 5. )
+main :: fn() {
+    assert 1 == 2;
+}

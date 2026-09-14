@@ -38,7 +38,7 @@ digit). These words are reserved:
 ```
 fn event return if elif else while for in match let mod meta struct
 import raw macro buffer device goto data group label
-rpush rpop rpeek brk
+rpush rpop rpeek brk assert
 u8 u16 bool byte short
 true false
 ```

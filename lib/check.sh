@@ -58,4 +58,30 @@ check test_trig 0000006200b500ec01010000010100b500b50101000000b5ff4b0000feffff4b
 check_cwd test_file 0a04303030610a30313233343536373839010a010121 etalfilet.bin
 check test_font 3f3f20417e3f3f08f0
 check test_mouse 0100020000010403
+check test_assert 41
+
+# check_brk <harness> <line> <col>: the ROM must print
+# `assert failed at <path>:<line>:<col>` and then idle (BRK never
+# exits). Runs headless in the background, kills after a beat,
+# and builds the expected bytes from its own path (locations are
+# absolute). POSIX sleep/kill only — no GNU timeout.
+check_brk() {
+  name=$1
+  line=$2
+  col=$3
+  "$ETAL" -r "$ROOT/lib/$name.ux" -o "$TMPD/$name.rom" \
+    || fail "$name: assembly failed"
+  SDL_VIDEODRIVER=dummy "$ROOT/vendor/linux-x86_64/uxn2" "$TMPD/$name.rom" \
+    > "$TMPD/$name.out" 2>&1 &
+  pid=$!
+  sleep 1
+  kill "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+  got=$(od -A n -t x1 "$TMPD/$name.out" | tr -d ' \n')
+  want=$(printf 'assert failed at %s/lib/%s.ux:%s:%s\n' "$ROOT" "$name" "$line" "$col" \
+    | od -A n -t x1 | tr -d ' \n')
+  [ "$got" = "$want" ] || fail "$name: got $got want $want"
+  echo "$name ok"
+}
+check_brk test_assert_fail 5 5
 check test_gfx3d 0680068079800680068079807980798029e029e0562029e029e056205620562029e029e00680068029e0562006807980562029e0798006805620562079807980fe121f09400066c91db6512540007eb940000fc981ee1f0940003ab2624a5125

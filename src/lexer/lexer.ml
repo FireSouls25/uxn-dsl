@@ -201,6 +201,7 @@ let read_identifier lexer =
 let keyword_or_ident s =
   match s with
   | "fn" -> FN
+  | "assert" -> ASSERT
   | "event" -> EVENT
   | "return" -> RETURN
   | "if" -> IF

@@ -59,6 +59,10 @@ type stmt =
   | RPush of expr
   | RPop
   | RPeek
+  (* `assert expr;` (proposal 11): the string is the failure location
+     (`file:line:col`, baked by the parser — positions don't survive
+     to codegen any other way). Failing halts with that message. *)
+  | Assert of expr * string
   (* `match` scrutinee { pat => body }: lowered by the expander to a
      freshened-temp + if/elif chain (proposal 3 v1), so the checker and
      generator never see it. Patterns are integer literals; a single

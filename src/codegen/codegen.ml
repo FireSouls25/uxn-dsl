@@ -1087,6 +1087,19 @@ let rec codegen_stmt env stmt =  match stmt with
     end
   | BrkStmt ->
     emit env "BRK\n"
+  | Assert (expr, loc) ->
+    (* Proposal 11: total the condition; on false print the baked
+       location and halt. A failing assert aborts to the emulator
+       (BRK), even inside a plain fn — that is the point. *)
+    let ok_label = new_local_label env "assert_ok" in
+    let loop_label = new_local_label env "assert" in
+    let label = make_string_label env (Printf.sprintf "assert failed at %s\n" loc) in
+    codegen_cond env expr;
+    emit env " ?&%s\n" ok_label;
+    emit env ";%s &%s LDAk .Console/write DEO INC2 LDAk ?&%s POP2\n"
+      label loop_label loop_label;
+    emit env "BRK\n";
+    emit env "&%s\n" ok_label
   | Goto lbl ->
     emit env "!&%s\n" lbl
   | Label lbl ->

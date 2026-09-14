@@ -477,6 +477,12 @@ let rec type_check_stmt env stmt =
     let t = type_of_expr env expr in
     reject_struct_value "rpush" t;
     reject_array_value "rpush" t
+  | Assert (expr, _) ->
+    (* Proposal 11: truthiness like If — the message carries the
+       baked location, so no position is needed here. *)
+    let cond_typ = type_of_expr env expr in
+    if cond_typ <> TypBool && cond_typ <> TypU8 && cond_typ <> TypU16 then
+      failwith "assert condition must be boolean";
   | RPop -> ()
   | RPeek -> ()
   | RawStmt _ -> ()

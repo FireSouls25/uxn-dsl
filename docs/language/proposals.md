@@ -308,6 +308,11 @@ statement would compile to: evaluate, skip on true, else
 `print("assert failed\n")` + `brk` — failing tests halt loudly with
 no outside tooling. Useless without locations, which is why it ships
 with the next item.
+(obsolete — implemented on `dev`: `assert E;` totals the condition,
+prints `assert failed at file:line:col` (location baked at parse)
+and `BRK`-halts; conditions mirror `if`; see
+[statements](statements.md). check.sh gates a passing harness plus
+the failing message via a location-aware gate.)
 
 ## 12. Source positions in errors (P1)
 
@@ -317,6 +322,14 @@ through parser (tokens become `token * pos`, failures report
 `line:col` plus the source line), and `assert` messages become file
 references instead of shrugs. Mechanical across `parser.ml`, large
 UX payoff, zero language change.
+(obsolete — implemented on `dev` with cheaper mechanics than
+sketched: positions ride a parallel array (no token/match changes),
+the parser prefixes every error via a shadowed `failwith`, the
+loader merges per-file name tables (dup errors cite both lines),
+and the checker/expander prefix via declaration context; `main`
+prints one `etal: error:` line plus the source line and exits 1.
+Checker errors point at the containing declaration — exact
+use-site lines need AST-wide positions, still open.)
 
 ## 13. Unused-definition warnings (P1)
 

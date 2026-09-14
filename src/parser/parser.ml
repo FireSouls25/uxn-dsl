@@ -554,6 +554,17 @@ and parse_stmt parser =
       let expr = parse_expr parser in
       expect parser SEMICOLON;
       ExprStmt expr)
+  | ASSERT ->
+    (* `assert expr;`: the keyword position bakes into the node for
+       the failure message (proposal 11+12). *)
+    let loc =
+      match string_of_pos (peek_pos parser) with
+      | "" -> "?"
+      | s -> s in
+    ignore (advance parser);
+    let expr = parse_expr parser in
+    expect parser SEMICOLON;
+    Assert (expr, loc)
   | _ ->
     let expr = parse_expr parser in
     expect parser SEMICOLON;

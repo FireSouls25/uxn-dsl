@@ -112,6 +112,7 @@ let rec subst_stmt psubst rename = function
   | Goto n -> Goto (rename_var rename n)
   | Label n -> Label (rename_var rename n)
   | RPush e -> RPush (subst_expr psubst rename e)
+  | Assert (e, loc) -> Assert (subst_expr psubst rename e, loc)
   | (RPop | RPeek | BrkStmt | RawStmt _) as s -> s
 
 let lookup_macro macros m =
@@ -211,6 +212,7 @@ and expand_stmt macros guard = function
   | InferDecl (n, e) -> [InferDecl (n, expand_expr macros guard e)]
   | ConstDecl (n, t, e) -> [ConstDecl (n, t, expand_expr macros guard e)]
   | RPush e -> [RPush (expand_expr macros guard e)]
+  | Assert (e, loc) -> [Assert (expand_expr macros guard e, loc)]
   | (Goto _ | Label _ | RPop | RPeek | BrkStmt | RawStmt _) as s -> [s]
 
 and opt_expand macros guard = function
