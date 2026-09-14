@@ -16,7 +16,8 @@ frame vector (web builds run silently: uxn5 has no audio device).
 
 ## How it maps to the language
 
-- **Notes** are a `song[24]: Note` table (`pitch` + `len` in frames):
+- **Notes** are `tracks[0]` (a `Track`: `notes: [24] Note` table
+  of `pitch` + `len` in frames, plus cursor/sample/envelope):
   16 = 8th, 32 = quarter at ~112 BPM. 14×16 + 6×32 = 416 frames ≈
   6.9s per loop.
 - **Sequencing** is one call per frame (`song_tick()`); attacks touch

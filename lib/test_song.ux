@@ -1,7 +1,44 @@
-( song harness: 4-note loop [(60,2),(62,2),(64,2),(67,4)]
-  driven 12 ticks prints the fired pitch stream (127 = waiting).
-  Expected console bytes: 3c 7f 3e 7f 40 7f 43 7f 7f 7f 3c 7f )
+( song harness: voice 0 plays [(60,2),(62,2)] (period 4), voice 1
+  plays [(67,3)] (period 3); 8 ticks print the interleaved fired
+  pitches (127 = waiting). A `song_tick_all()` phase up front proves
+  the four fire macros expand over Audio0-3 (headless-dummy writes),
+  then cursors reset for the deterministic print half.
+  Expected console bytes:
+  3c 43 7f 7f 3e 7f 7f 43 3c 7f 7f 7f 3e 43 7f 7f )
 device Audio0 48 {
+    vector: 2
+    position: 2
+    output: 1
+    pad: 3
+    adsr: 2
+    length: 2
+    addr: 2
+    volume: 1
+    pitch: 1
+}
+device Audio1 64 {
+    vector: 2
+    position: 2
+    output: 1
+    pad: 3
+    adsr: 2
+    length: 2
+    addr: 2
+    volume: 1
+    pitch: 1
+}
+device Audio2 80 {
+    vector: 2
+    position: 2
+    output: 1
+    pad: 3
+    adsr: 2
+    length: 2
+    addr: 2
+    volume: 1
+    pitch: 1
+}
+device Audio3 96 {
     vector: 2
     position: 2
     output: 1
@@ -15,16 +52,30 @@ device Audio0 48 {
 import "song.ux"
 
 main :: fn() {
-    song[0].pitch = 60;
-    song[0].len = 2;
-    song[1].pitch = 62;
-    song[1].len = 2;
-    song[2].pitch = 64;
-    song[2].len = 2;
-    song[3].pitch = 67;
-    song[3].len = 4;
-    song_len = 4;
-    for t in 0..12 {
-        varvara.console.write(song_next());
+    tracks[0].notes[0].pitch = 60;
+    tracks[0].notes[0].len = 2;
+    tracks[0].notes[1].pitch = 62;
+    tracks[0].notes[1].len = 2;
+    tracks[0].len = 2;
+    tracks[0].sample = &sq32;
+    tracks[0].slen = 32;
+    tracks[0].vol = 200;
+    tracks[0].adsr = 4369;
+    tracks[1].notes[0].pitch = 67;
+    tracks[1].notes[0].len = 3;
+    tracks[1].len = 1;
+    tracks[1].sample = &sq32;
+    tracks[1].slen = 32;
+    tracks[1].vol = 200;
+    tracks[1].adsr = 4369;
+    song_tick_all();
+    song_tick_all();
+    tracks[0].pos = 0;
+    tracks[0].wait = 0;
+    tracks[1].pos = 0;
+    tracks[1].wait = 0;
+    for t in 0..8 {
+        varvara.console.write(track_next(0));
+        varvara.console.write(track_next(1));
     }
 }

@@ -54,7 +54,7 @@ bindings, then function locals/params, then globals, in splice order.
 | `sin256`, `cos256`, `trig_init` | fns (turns256 trig) | `lib/trig.ux` | [stdlib](stdlib.md#trigux) |
 | `vset`, `frame_begin`, `rot_y/x`, `project`, `plot`, `edge` | fns + macro (3D wireframe) | `lib/gfx3d.ux` | [stdlib](stdlib.md#gfx3dux) |
 | `NOTE_*`, `sfx`, `sq32` | consts + data + fn (audio) | `lib/audio.ux` | [stdlib](stdlib.md#audioux-songux) |
-| `song_next/fire/tick`, `Note` | fns + struct (sequencer) | `lib/song.ux` | [stdlib](stdlib.md#audioux-songux) |
+| `track_next/fire`, `song_tick(_all)`, `Note`, `Track` | fn + macros + structs (4-voice sequencer) | `lib/song.ux` | [stdlib](stdlib.md#audioux-songux) |
 | `file_read/write/stat/delete_req`, `file_poll/on_event` | macros + globals (files) | `lib/file.ux` | [stdlib](stdlib.md#fileux) |
 | `draw_char`, `draw_string`, `glyph_clamp/addr` | macros + data + fns (text) | `lib/font.ux` | [stdlib](stdlib.md#fontux) |
 | `screen_size`, `blit`, `clear`, `theme`, `SPRITE_*`, `PIXEL_*` | macros/consts (screen) | `lib/screen.ux` | [stdlib](stdlib.md#screenux) |

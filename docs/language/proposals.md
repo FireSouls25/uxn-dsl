@@ -215,12 +215,14 @@ The language covers compute, control flow, memory, sprites and input
 well. The remaining gaps cluster around devices and UI text — fitting,
 since this machine is centered on direct UI work:
 
-- **Audio.** Landed on `dev`: `data x = file("*.wav")` embeds
+ - **Audio.** Landed on `dev`: `data x = file("*.wav")` embeds
   8-bit mono 44100Hz samples with zero conversion (anything else is
   a compile error); `lib/audio.ux` has MIDI note consts, a stock
-  square wave and one-shot `sfx`; `lib/song.ux` sequences `Note`
-  tables through Audio0. A `sound` sketch (one-shot blip on eat,
-  using a tiny square-wave blob) is the right first artifact.
+  square wave and one-shot `sfx`; `lib/song.ux` sequences `Track`
+  rows through Audio0-3 (`track_next` pure per voice,
+  `track_fire0-3` macros so unfired voices need no device,
+  `song_tick` / `song_tick_all`). A `sound` sketch (one-shot blip
+  on eat, using a tiny square-wave blob) is the right first artifact.
  - **Text.** Landed on `dev`: `lib/font.ux` is an in-repo 8×8
   1bpp font (printable ASCII 32–126, 760 bytes) plus `draw_char` /
   `draw_string` blit macros reusing the reviewed-macro pattern

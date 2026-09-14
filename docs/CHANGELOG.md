@@ -69,7 +69,10 @@ paths, `test_file` round-trip gate. Font/text: `lib/font.ux`
 in-repo 8×8 font (ASCII 32–126) with `draw_char` / `draw_string`
 macros (`\n` rows, `?` clamp) and gated `glyph_clamp` /
 `glyph_addr` math; also fixes silent stride-2 reads when indexing
-string literals. Software 3D: `trig.ux`
+string literals. Multitrack audio: `song.ux` v2 `Track` rows
+through Audio0-3 (`track_next` pure per voice, `track_fire0-3`
+macros, `song_tick` / `song_tick_all`; single-song API retired,
+Megalovania migrated). Software 3D: `trig.ux`
 (self-built turns256 sine table) and `gfx3d.ux` (rotate/project/DDA
 wireframe) with a spinning-cube demo. Dead-function elimination
 (reachable-from-main, raw disables) so libraries don't eat zero-page.
