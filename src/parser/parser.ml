@@ -783,7 +783,8 @@ let parse_decl parser =
       | EVENT -> ignore (advance parser); parse_func parser name true
       | STRUCT ->
         (* `Point :: struct { x: u16; y: u16 }`: field offsets derive
-           from field sizes; v1 fields are scalar (checked later). *)
+           from field sizes; v2 fields are scalars, nested structs,
+           or fixed arrays of either (checked later). *)
         ignore (advance parser);
         expect parser LBRACE;
         let fields = ref [] in

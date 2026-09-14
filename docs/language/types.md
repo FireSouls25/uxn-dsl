@@ -6,11 +6,25 @@
 | `u16` | 2 bytes | a big-endian short, high byte deeper |
 | `u16 mod N` | 2 bytes | a short always in `[0, N)` — stores wrap |
 | `u8 mod N` | 1 byte | a byte always in `[0, N)` — stores wrap |
-| `Point` (struct) | sum of fields | rows in buffers/variables; field access only |
+| `Point` (struct) | sum of fields | rows in buffers/variables; fields, nesting, whole-value `=` |
 | `bool` | 1 byte | `0x00` or `0x01` (guaranteed by comparisons) |
 | `void` | 0 bytes | no value (statements, void calls) |
-| `[N] T` | N × sizeof(T) | fixed array (only `u8`/`u16`/`bool` elements) |
+| `[N] T` | N × sizeof(T) | fixed array (`u8`/`u16`/`bool`, or structs in buffers) |
 | `&T` | 2 bytes | address of a `T` |
+
+## Structs (v2)
+
+Fields are scalars, previously-declared structs (nesting), or fixed
+arrays of scalars or structs — so `Track :: struct { notes: [8] Note;
+vol: u8; }` just works. Single-pass checking means only earlier
+structs resolve: forward references and cycles are unknown-type
+errors, never miscompiles. Paths chain arbitrarily (`a.pos.x`,
+`rows[i].pos.y`, `t.notes[2].pitch`, `g.tags[i]`); deep shapes use
+absolute addressing, single-level shapes keep the old zero-page code.
+Same-type struct values copy whole with `=` (a byte copy through a
+stashed pointer — `pos1 = pos0;`, `rows[1] = rows[0];`); struct-typed
+variables still take no initializer (declare bare, then copy or
+assign fields).
 
 ## Literal typing
 
@@ -48,7 +62,8 @@ operators decay to the plain base; comparisons yield `bool` as usual.
 A mod value flows wherever its base fits — including `u8` slots when
 the modulus is ≤ 256 — and plain values may be passed to mod-typed
 function parameters (reduced on entry). Mod types live on variables
-only: buffer elements, group fields and bases reject them.
+only: buffer elements, group fields and bases, and struct fields
+reject them.
 
 Exactness note: reduction is `DIV`-based, so it is exact for `+`/`-`
 when operands are in range (subtraction can never overflow: Uxn wraps
@@ -64,9 +79,10 @@ assigning a `u16` to a `u8` is a type error. The single exception is
 `varvara.console.write` / `error`, which truncate to the low byte,
 because console ports are inherently byte-wide.
 
-Struct types never widen, narrow, or compare: any whole-value use is
-a compile error. Unknown type names (typos included) fail at the use
-site: `unknown type \`u166\``.
+Struct types never widen, narrow, compare, or pass as call
+arguments or returns: any other whole-value use is a compile error.
+Unknown type names (typos included) fail at the use site:
+`unknown type \`u166\``.
 
 ## Truthiness
 

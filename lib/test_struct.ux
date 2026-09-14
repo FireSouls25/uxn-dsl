@@ -1,0 +1,41 @@
+( struct v2 harness: nested structs, array fields, struct-elem
+  arrays, and whole-value copies (zero-page var, buffer row,
+  nested field, array element). Prints the observed bytes.
+  Expected console bytes: 0b 21 2c 37 42 4d 2c 58 0a )
+
+Vec3 :: struct { x: u8; y: u16; z: u8; };
+Obj3 :: struct { pos: Vec3; tile: u8; tags: [4] u8; };
+Grid :: struct { cells: [2] Vec3; n: u8; };
+
+buffer srows[4]: Obj3;
+
+spos0: Vec3;
+spos1: Vec3;
+sgrid: Grid;
+
+main :: fn() {
+    spos0.x = 11;
+    spos0.y = 2000;
+    spos0.z = 33;
+    spos1 = spos0;
+    varvara.console.write(spos1.x);
+    varvara.console.write(spos1.z);
+    srows[0].pos.x = 44;
+    srows[0].pos.y = 3000;
+    srows[0].pos.z = 55;
+    srows[0].tile = 66;
+    srows[0].tags[0] = 1;
+    srows[0].tags[2] = 77;
+    srows[1] = srows[0];
+    varvara.console.write(srows[1].pos.x);
+    varvara.console.write(srows[1].pos.z);
+    varvara.console.write(srows[1].tile);
+    varvara.console.write(srows[1].tags[2]);
+    srows[2].pos = srows[0].pos;
+    varvara.console.write(srows[2].pos.x);
+    sgrid.cells[1].x = 88;
+    sgrid.cells[1].y = 4000;
+    sgrid.cells[0] = sgrid.cells[1];
+    varvara.console.write(sgrid.cells[0].x);
+    varvara.console.write(srows[0].pos.y - 2990);
+}

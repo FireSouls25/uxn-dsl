@@ -41,8 +41,12 @@ type codegen_env = {
   mutable devices: (string * (string * int) list) list;
   mutable groups: (string * (string * int) list) list;
   (* Structs: name -> [(field, offset, size)]. Offsets derive from
-     field sizes at declaration; v1 fields are scalar. *)
+     field sizes at declaration; v2 fields nest structs and arrays,
+     so sizes resolve through the table below. *)
   mutable structs: (string * (string * (int * int)) list) list;
+  (* Struct field types: name -> [(field, type)], for resolving
+     nested/array paths (offsets alone can't name the next step). *)
+  mutable struct_types: (string * (string * Ast.typ) list) list;
   mutable constants: string list;
   mutable zero_order: zero_item list;
   mutable func_sigs: (string * int list) list;
@@ -78,6 +82,7 @@ let create_env () = {
   devices = [];
   groups = [];
   structs = [];
+  struct_types = [];
   constants = [];
   zero_order = [];
   func_sigs = [];
@@ -129,6 +134,61 @@ let is_struct_var env name =
     | Ast.TypStruct s -> Some (s, info)
     | _ -> None)
   with Not_found -> None
+
+(* v2: does a type contain a struct node (directly or through an
+   array/pointer/mod wrapper)? *)
+let rec typ_involves_struct = function
+  | Ast.TypStruct _ -> true
+  | Ast.TypArray (e, _) | Ast.TypPointer e | Ast.TypMod (e, _) ->
+    typ_involves_struct e
+  | _ -> false
+
+(* v2: does an Ident/Index/Field chain touch a struct node? Anything
+   else (devices, groups, scalars) is false, so legacy emitters stay
+   untouched wherever this is false. *)
+let rec composite_involves_struct env = function
+  | Ast.Ident n ->
+    (try
+       let info =
+         try List.assoc n env.local_vars
+         with Not_found -> List.assoc n env.global_vars
+       in
+       typ_involves_struct info.typ
+     with Not_found -> false)
+  | Ast.Index (a, i) ->
+    composite_involves_struct env a || composite_involves_struct env i
+  | Ast.Field (e, _) -> composite_involves_struct env e
+  | _ -> false
+
+(* v2: resolve an Ident/Index/Field chain over struct vars, struct
+   arrays and their nested/array fields to its type. Anything else
+   fails — callers only route struct-involved shapes here. *)
+let rec composite_node_typ env = function
+  | Ast.Ident n ->
+    (try
+       (try List.assoc n env.local_vars
+        with Not_found -> List.assoc n env.global_vars).typ
+     with Not_found -> failwith (Printf.sprintf "undefined variable `%s`" n))
+  | Ast.Index (a, _) ->
+    (match composite_node_typ env a with
+     | Ast.TypArray (e, _) | Ast.TypPointer e -> e
+     | _ -> failwith "cannot index non-array path")
+  | Ast.Field (e, f) ->
+    (match composite_node_typ env e with
+     | Ast.TypStruct s ->
+       (try List.assoc f (List.assoc s env.struct_types)
+        with Not_found -> failwith (Printf.sprintf "`%s` has no field `%s`" s f))
+     | _ -> failwith (Printf.sprintf "cannot access field `%s` of non-struct value" f))
+  | _ -> failwith "not a struct/array path"
+
+(* v2: `dst = src` is a whole-struct copy iff both sides resolve to
+   the same named struct. Never raises (boolean probe for a guard);
+   the checked program decides — legacy arms keep their errors. *)
+let is_struct_copy env l r =
+  match (try Some (composite_node_typ env l, composite_node_typ env r)
+         with _ -> None) with
+  | Some (Ast.TypStruct s1, Ast.TypStruct s2) -> s1 = s2
+  | _ -> false
 
 (* Size of a type that may name a struct (buffers of structs, struct
    variables). Non-struct types use typ_size as before. *)
@@ -273,6 +333,23 @@ let rec expr_is_u8 env expr =
       | Some (_, 1) -> true
       | _ -> false)
     | None -> false)
+  | Field (e, fname) ->
+    (* v2: scalar leaf of a chained path leaves one byte. v1 shapes
+       matched above; anything unresolvable keeps the legacy false. *)
+    (match e with
+     | Ident _ | Index (Ident _, _) -> false
+     | _ ->
+       (match try Some (composite_node_typ env (Field (e, fname))) with _ -> None with
+        | Some (Ast.TypU8 | Ast.TypBool) -> true
+        | _ -> false))
+  | Index (arr, _) ->
+    (* v2: byte element of an array-typed path. *)
+    (match arr with
+     | Ident _ -> false
+     | _ ->
+       (match try Some (composite_node_typ env arr) with _ -> None with
+        | Some (Ast.TypArray (Ast.TypU8, _)) | Some (Ast.TypArray (Ast.TypBool, _)) -> true
+        | _ -> false))
   | _ -> false
 
 (* Reduce the on-stack value into [0, m): the existing `%` lowering
@@ -488,6 +565,11 @@ let rec codegen_expr env expr =
         emit env ";%s JSR2" name
       | _ -> failwith "Invalid function expression")
     end
+  | Index (arr, index) when (match arr with Ast.Ident _ -> false | _ -> composite_involves_struct env arr) ->
+    (* v2: element of an array-typed path (a struct's array field). *)
+    let esz = codegen_arrayfield_addr env arr index in
+    emit env " ";
+    if esz = 1 then emit env "LDA" else emit env "LDA2"
   | Index (arr, index) ->
     let esz = codegen_index_addr env arr index in
     emit env " ";
@@ -542,12 +624,22 @@ let rec codegen_expr env expr =
         | _ -> emit env ".%s/%s LDZ2" v field)
       | None ->
         codegen_expr env expr)
+    | _ when composite_involves_struct env expr ->
+      (* v2: chained access over nested structs — absolute addressing,
+         sized by the leaf type (checked scalar). *)
+      codegen_path_load env (Field (expr, field))
     | _ ->
       codegen_expr env expr)
   | AddrOf name ->
     emit env ";%s" name
   | RawLit s ->
     emit env "%s" s
+  | Assign (left, right) when is_struct_copy env left right ->
+    (* v2: same-type struct values copy whole (checked). *)
+    (match composite_node_typ env left with
+     | Ast.TypStruct s ->
+       codegen_struct_copy env left right (resolve_size env (Ast.TypStruct s))
+     | _ -> failwith "internal error: struct copy of non-struct")
   | Assign (left, right) ->
     (match left with
     | Ident name ->
@@ -621,9 +713,30 @@ let rec codegen_expr env expr =
         | None ->
           codegen_expr env right;
           emit env " #0000")
+      | _ when composite_involves_struct env field_expr ->
+        (* v2: store a scalar leaf of a chained path (checked scalar;
+           struct leaves copy via the Assign guard above). *)
+        let sz =
+          (match composite_node_typ env (Field (field_expr, field_name)) with
+           | Ast.TypU8 | Ast.TypBool -> 1
+           | Ast.TypU16 -> 2
+           | _ -> failwith "cannot store a whole array or struct here (assign fields)") in
+        codegen_path_store env (Field (field_expr, field_name)) right sz
       | _ ->
         codegen_expr env right;
         emit env " #0000")
+    | Index (arr, index) when (match arr with Ast.Ident _ -> false | _ -> composite_involves_struct env arr) ->
+      (* v2: store an element of an array-typed path. STA wants
+         ( value addr* -- ): value first, address on top. *)
+      let esz =
+        (match composite_node_typ env arr with
+         | Ast.TypArray (e, _) -> resolve_size env e
+         | _ -> failwith "cannot index non-array path") in
+      codegen_rhs env right esz;
+      emit env " ";
+      ignore (codegen_arrayfield_addr env arr index);
+      emit env " ";
+      if esz = 1 then emit env "STA" else emit env "STA2"
     | Index (arr, index) ->
       (* STA expects ( value addr* -- ): value first, address on top. *)
       let esz, _ = index_array_info env arr in
@@ -691,6 +804,91 @@ and codegen_index_addr env arr index =
   if elem_size <> 1 then emit env " #%04x MUL2" elem_size;
   emit env " ADD2";
   elem_size
+
+(* v2: emit code leaving the absolute (short) address of a composite
+   node — struct var, struct-array row, nested field, or array
+   element. Absolute everywhere, never LDZ: only new (deep) shapes
+   route here, so v1 output is untouched and structs crossing the
+   zero-page boundary stay correct. Every `@name` reservation (zero
+   page, buffers) is an absolute label, so `;name` works for all. *)
+and codegen_composite_addr env expr =
+  match expr with
+  | Ast.Ident n ->
+    let info = get_var_info env n in
+    emit env ";%s" (if info.is_local then info.addr else info.name)
+  | Ast.Index (arr, idx) ->
+    codegen_composite_addr env arr;
+    emit env " ";
+    codegen_rhs env idx 2;
+    let stride =
+      (match composite_node_typ env arr with
+       | Ast.TypArray (e, _) | Ast.TypPointer e -> resolve_size env e
+       | _ -> failwith "cannot index non-array path") in
+    if stride <> 1 then emit env " #%04x MUL2" stride;
+    emit env " ADD2"
+  | Ast.Field (e, f) ->
+    codegen_composite_addr env e;
+    let off =
+      (match composite_node_typ env e with
+       | Ast.TypStruct s ->
+         (try fst (List.assoc f (List.assoc s env.structs))
+          with Not_found -> failwith (Printf.sprintf "`%s` has no field `%s`" s f))
+       | _ -> failwith (Printf.sprintf "cannot access field `%s` of non-struct value" f)) in
+    if off <> 0 then emit env " #%04x ADD2" off
+  | _ -> failwith "not a struct/array path"
+
+(* v2: load a scalar leaf of a deep path (checked scalar). *)
+and codegen_path_load env expr =
+  let sz =
+    (match composite_node_typ env expr with
+     | Ast.TypU8 | Ast.TypBool -> 1
+     | Ast.TypU16 -> 2
+     | _ -> failwith "cannot load a whole array or struct value (index an element or access `.field`)") in
+  codegen_composite_addr env expr;
+  emit env " ";
+  if sz = 1 then emit env "LDA" else emit env "LDA2"
+
+(* v2: store a scalar leaf of a deep path. STA wants value first,
+   address on top. *)
+and codegen_path_store env expr rhs sz =
+  codegen_rhs env rhs sz;
+  emit env " ";
+  codegen_composite_addr env expr;
+  emit env " ";
+  if sz = 1 then emit env "STA" else emit env "STA2"
+
+(* v2: address of element `arr[idx]` where arr is an array-typed
+   path (e.g. a struct's array field). Returns the element size. *)
+and codegen_arrayfield_addr env arr idx =
+  let esz =
+    (match composite_node_typ env arr with
+     | Ast.TypArray (e, _) -> resolve_size env e
+     | _ -> failwith "cannot index non-array path") in
+  codegen_composite_addr env arr;
+  emit env " ";
+  codegen_rhs env idx 2;
+  if esz <> 1 then emit env " #%04x MUL2" esz;
+  emit env " ADD2";
+  esz
+
+(* v2: `dst = src` for same-type struct values — a byte copy with
+   both pointers stashed (rstack [src dst], dst on top). LDA leaves
+   one byte under the short dst address, so each byte zero-extends
+   (`#00 SWP`, the usual idiom) before SWP2. Per byte the main stack
+   goes [] -> [dst src] -> [] and the rstack invariant is restored
+   via ROT2/STH2, so single-evaluation index expressions stay
+   single-evaluation:
+     STH2kr STH2r STH2kr ROT2 STH2 #k ADD2 LDA #00 SWP SWP2 #k ADD2 STA
+   then both pointers pop. *)
+and codegen_struct_copy env dst src size =
+  codegen_composite_addr env src;
+  emit env " STH2 ";
+  codegen_composite_addr env dst;
+  emit env " STH2";
+  for k = 0 to size - 1 do
+    emit env " STH2kr STH2r STH2kr ROT2 STH2 #%04x ADD2 LDA #00 SWP SWP2 #%04x ADD2 STA" k k
+  done;
+  emit env " STH2r POP2 STH2r POP2"
 
 (* Total conditions (proposal 8): JCI tests one byte, so a short
    condition would test only its low byte and leak the high one. Reduce
@@ -893,6 +1091,22 @@ let rec codegen_stmt env stmt =  match stmt with
           | Some (_, sz) -> sz
           | None -> 2)
         | None -> 2)
+      | Field (e, fname) ->
+        (* v2: sized by the leaf type of the chained path. *)
+        (match e with
+         | Ident _ | Index (Ident _, _) -> 2
+         | _ ->
+           (match try Some (composite_node_typ env (Field (e, fname))) with _ -> None with
+            | Some (Ast.TypU8 | Ast.TypBool) -> 1
+            | _ -> 2))
+      | Index (arr, _) ->
+        (* v2: sized by the array-typed path's element. *)
+        (match arr with
+         | Ident _ -> 2
+         | _ ->
+           (match try Some (composite_node_typ env arr) with _ -> None with
+            | Some (Ast.TypArray (Ast.TypU8, _)) | Some (Ast.TypArray (Ast.TypBool, _)) -> 1
+            | _ -> 2))
       | _ -> 2
     in
     if size = 1 then emit env " STH\n" else emit env " STH2\n"
@@ -1199,16 +1413,17 @@ let codegen_program program =
       | None -> env.meta <- Some (title, author))
     | StructDecl s ->
       (* Type-level only: field (offset, size) table for `.field`
-         access. The checker validated fields and order; holders were
-         already allocated by size. Fields are scalar, so typ_size
-         cannot fail here. *)
+         access, plus the field types for resolving nested/array
+         paths. The checker validated fields and order (inner structs
+         first), so resolve_size cannot fail here. *)
       let (_, fields) =
         List.fold_left (fun (off, acc) (fname, ftyp) ->
-          let sz = typ_size ftyp in
+          let sz = resolve_size env ftyp in
           (off + sz, (fname, (off, sz)) :: acc)
         ) (0, []) s.struct_fields
       in
-      env.structs <- (s.struct_name, List.rev fields) :: env.structs
+      env.structs <- (s.struct_name, List.rev fields) :: env.structs;
+      env.struct_types <- (s.struct_name, s.struct_fields) :: env.struct_types
     | RawDecl raw ->
       (* Emitted with the data section (main RAM): raw blocks usually
          define data/tables, which drifblim forbids in zero-page.

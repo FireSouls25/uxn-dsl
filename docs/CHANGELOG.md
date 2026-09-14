@@ -58,7 +58,11 @@ the VM row per host OS (SDL2 runtime fix still open — see
 vendor/BUILD.md). Audio: `.wav` assets (8-bit mono 44100Hz, zero
 conversion), `audio.ux` (MIDI notes, square wave, one-shot sfx),
 `song.ux` tick sequencer, and a Megalovania demo (web builds stay
-silent — uxn5 has no audio device). Software 3D: `trig.ux`
+silent — uxn5 has no audio device). Structs v2: nested structs,
+fixed array fields, chained paths (`rows[i].pos.x`), and same-type
+whole-value `=` (stashed-pointer byte copy; params/returns/compare
+stay field-wise), with a `test_struct` console gate and golden
+coverage. Software 3D: `trig.ux`
 (self-built turns256 sine table) and `gfx3d.ux` (rotate/project/DDA
 wireframe) with a spinning-cube demo. Dead-function elimination
 (reachable-from-main, raw disables) so libraries don't eat zero-page.

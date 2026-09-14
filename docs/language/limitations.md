@@ -49,12 +49,14 @@ not are marked **footgun**.
   the emitted hex is garbage. (Assets are validated as whole tiles.)
 - **Data blobs are not indexable** — take `&blob` and do address
   arithmetic, or copy bytes into a buffer first.
-- **Structs are v1**: scalar `u8`/`u16`/`bool` fields only (no
-  nesting, `mod`, arrays or pointers); no struct params, returns,
-  or whole-value operations (assign/compare/pass/return a struct
-  and the compiler tells you to use fields); struct types must be
-  declared before use. `match` is desugared dispatch (no jump
-  tables) over integer literals plus trailing `_`.
+- **Structs are v2**: scalar/`struct`/fixed-array fields (no `mod`,
+  no pointers; inner structs declared first, so cycles can't form);
+  chained paths (`a.b.c`, `rows[i].pos.x`, `t.notes[2].pitch`) and
+  same-type whole-value `=` (byte copy) compile. Still errors: struct
+  params, returns, comparison, and whole-value argument passing —
+  pass fields. Struct types must be declared before use. `match` is
+  desugared dispatch (no jump tables) over integer literals plus
+  trailing `_`.
 - **Constants only carry values** for integer and identifier forms;
   anything else degrades to `|0000`.
 

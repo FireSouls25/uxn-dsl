@@ -90,6 +90,18 @@ let reject_struct_value what typ =
   if contains_struct typ then
     failwith (Printf.sprintf "%s: cannot use a whole struct value (access `.field` instead)" what)
 
+(* v2: does an Ident/Index/Field chain touch a struct-typed node?
+   Devices/groups never do (they aren't vars), so legacy paths stay
+   untouched wherever this is false. *)
+let rec path_involves_struct env = function
+  | Ident n ->
+    (match lookup_var env n with
+     | Some t -> contains_struct t
+     | None -> false)
+  | Index (a, _) -> path_involves_struct env a
+  | Field (e, _) -> path_involves_struct env e
+  | _ -> false
+
 (* Validate a declared type: structs must be declared (in order),
    pointers to structs are unsupported, mod-ness is parser-checked. *)
 let rec validate_type env what = function
@@ -315,6 +327,13 @@ let rec type_of_expr env expr =
           | TypU16 -> TypU16
           | TypVoid -> TypU8
           | _ -> TypU8))
+      | _ when path_involves_struct env arr ->
+        (* v2: field of a nested struct row or array element, e.g.
+           `m.rows[i].x` or `t.notes[1].pitch` — resolve the chain. *)
+        (match composite_typ env arr with
+         | TypArray (TypStruct sname, _) -> struct_field_of sname
+         | _ ->
+           failwith (Printf.sprintf "cannot access field `%s` of non-struct row" field))
       | _ ->
         let expr_typ = type_of_expr env expr in
         reject_struct_value "field base" expr_typ;
@@ -322,6 +341,10 @@ let rec type_of_expr env expr =
         | TypU16 -> TypU16
         | TypVoid -> TypU8
         | _ -> TypU8))
+    | _ when path_involves_struct env expr ->
+      (* v2: chained access over nested structs, e.g. `a.pos.x` —
+         resolve the whole path. *)
+      composite_typ env (Field (expr, field))
     | _ ->
       let expr_typ = type_of_expr env expr in
       reject_struct_value "field base" expr_typ;
@@ -341,20 +364,57 @@ let rec type_of_expr env expr =
     | _ -> ());
     let left_typ = type_of_expr env left in
     let right_typ = type_of_expr env right in
-    if contains_struct left_typ || contains_struct right_typ then
-      failwith "cannot assign whole structs (assign field by field)";
-    if right_typ = TypVoid || assign_compat left_typ right_typ ||
-       (match left with Field _ -> true | _ -> false) then
-      left_typ
-    else
-      failwith "Type mismatch in assignment"
+    (* v2: same-type struct values copy whole (`a = b` lowers to a
+       byte copy). Anything else holding a struct is still an error. *)
+    (match left_typ, right_typ with
+     | TypStruct s1, TypStruct s2 when s1 = s2 -> left_typ
+     | _ ->
+       if contains_struct left_typ || contains_struct right_typ then
+         failwith "cannot assign whole structs of different type (same-type struct values copy with `=`)";
+       if right_typ = TypVoid || assign_compat left_typ right_typ ||
+          (match left with Field _ -> true | _ -> false) then
+         left_typ
+       else
+         failwith "Type mismatch in assignment")
   | CompoundLit (name, fields) ->
     TypU16
+
+(* v2: resolve an Ident/Index/Field chain over structs and arrays to
+   its type. Mutual with type_of_expr (index expressions need it).
+   Only struct/array-typed nodes are traversed — devices, groups and
+   anything else fail here, so callers try their own shapes first. *)
+and composite_typ env = function
+  | Ident n ->
+    (match lookup_var env n with
+     | Some t -> t
+     | None -> failwith (Printf.sprintf "Undefined variable %s" n))
+  | Index (a, i) ->
+    let it = type_of_expr env i in
+    (match mod_base it with
+     | TypU8 | TypU16 -> ()
+     | _ -> failwith "Array index must be u8 or u16");
+    (match composite_typ env a with
+     | TypArray (e, _) | TypPointer e -> e
+     | _ -> failwith "Cannot index non-array type")
+  | Field (e, f) ->
+    (match composite_typ env e with
+     | TypStruct s ->
+       (match lookup_struct_field env s f with
+        | Some t -> t
+        | None -> failwith (Printf.sprintf "`%s` has no field `%s`" s f))
+     | _ -> failwith (Printf.sprintf "cannot access field `%s` of non-struct value" f))
+  | _ -> failwith "not a struct/array path"
 
 let rec type_check_stmt env stmt =
   match stmt with
   | ExprStmt expr ->
-    reject_struct_value "expression statement" (type_of_expr env expr)
+    let t = type_of_expr env expr in
+    (match expr, t with
+     (* v2: a same-type struct copy is a complete statement (the
+        Assign case already rejected mixed types). It leaves nothing
+        on the stack, so bare `a = b;` is balanced. *)
+     | Assign _, TypStruct _ -> ()
+     | _ -> reject_struct_value "expression statement" t)
   | Return expr ->
     (match expr with
     | Some expr ->
@@ -408,7 +468,7 @@ let rec type_check_stmt env stmt =
     | Some expr ->
       let init_typ = type_of_expr env expr in
       if contains_struct typ || contains_struct init_typ then
-        failwith (Printf.sprintf "cannot initialize `%s` with a whole struct (declare bare, then assign fields)" name);
+        failwith (Printf.sprintf "cannot initialize `%s` with a whole struct (declare bare, then assign fields or copy with `=`)" name);
       if not (assign_compat typ init_typ) then
         failwith (Printf.sprintf "Type mismatch in variable declaration for %s" name)
     | None -> ());
@@ -477,7 +537,7 @@ let type_check_program program =
       | Some expr ->
         let init_typ = type_of_expr global_env expr in
         if contains_struct typ || contains_struct init_typ then
-          failwith (Printf.sprintf "cannot initialize `%s` with a whole struct (declare bare, then assign fields)" name);
+          failwith (Printf.sprintf "cannot initialize `%s` with a whole struct (declare bare, then assign fields or copy with `=`)" name);
         if not (assign_compat typ init_typ) then
           failwith (Printf.sprintf "Type mismatch in global variable declaration for %s" name)
       | None -> ());
@@ -554,19 +614,34 @@ let type_check_program program =
       | _ -> failwith (Printf.sprintf "buffer `%s` must hold u8/u16/bool" b.buf_name));
       add_var global_env b.buf_name (TypArray (b.buf_elem, b.buf_len))
     | StructDecl s ->
-      (* v1 fields are scalar u8/u16/bool: offsets are plain sizes and
-         every store stays a sized STZ. Anything richer is a clear
-         error, not a silent miscompile. *)
-      List.iter (fun (fname, ftyp) ->
-        match ftyp with
+      (* v2 fields: scalars, previously-declared structs (nesting),
+         and fixed arrays of scalars or structs. Checking is
+         single-pass, so only earlier structs resolve — a forward
+         reference or cycle is an unknown-type error here, never a
+         miscompile downstream. *)
+      let rec valid_field fname = function
         | TypU8 | TypU16 | TypBool -> ()
-        | TypMod _ ->
-          failwith (Printf.sprintf "struct `%s` field `%s`: mod-typed fields are not supported (v1)" s.struct_name fname)
-        | TypStruct _ ->
-          failwith (Printf.sprintf "struct `%s` field `%s`: nested structs are not supported (v1)" s.struct_name fname)
+        | TypStruct n ->
+          (match lookup_struct global_env n with
+           | Some _ -> ()
+           | None ->
+             failwith (Printf.sprintf "struct `%s` field `%s`: unknown type `%s` (declare it first)" s.struct_name fname n))
+        | TypArray (e, n) ->
+          if n < 1 then
+            failwith (Printf.sprintf "struct `%s` field `%s`: array length must be positive" s.struct_name fname);
+          (match e with
+           | TypU8 | TypU16 | TypBool -> ()
+           | TypStruct sn ->
+             (match lookup_struct global_env sn with
+              | Some _ -> ()
+              | None ->
+                failwith (Printf.sprintf "struct `%s` field `%s`: unknown type `%s` (declare it first)" s.struct_name fname sn))
+           | _ ->
+             failwith (Printf.sprintf "struct `%s` field `%s`: only arrays of u8/u16/bool or structs (v2)" s.struct_name fname))
         | _ ->
-          failwith (Printf.sprintf "struct `%s` field `%s`: only u8/u16/bool fields (v1)" s.struct_name fname)
-      ) s.struct_fields;
+          failwith (Printf.sprintf "struct `%s` field `%s`: mod/pointer fields are not supported (v2: scalars, structs, arrays)" s.struct_name fname)
+      in
+      List.iter (fun (fname, ftyp) -> valid_field fname ftyp) s.struct_fields;
       add_struct global_env s.struct_name s.struct_fields
     | RawDecl _ -> ()
   ) program;

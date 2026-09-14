@@ -153,12 +153,26 @@ pts[i].x = nx;           ( base + i*3, then +0 field offset )
 py: u8 = p.y;            ( slot address + 2 )
 ```
 
-A `struct` declares field offsets at type-check time (v1 fields are
-scalar `u8`/`u16`/`bool` — no nesting, no `mod`, no arrays). Only
-`.field` access compiles: whole struct values never touch the stack,
-so assigning, comparing, passing or returning a whole struct is a
-compile error with a field-directed message. Struct-typed variables
-take no initializer (declare bare, then assign fields); buffers of
+```ux
+Note :: struct { pitch: u8; len: u8; };
+Track :: struct { notes: [8] Note; vol: u8; };
+
+buffer tracks[4]: Track;
+t: Track;
+
+tracks[i].notes[2].pitch = 60;   ( chained: row + field + element )
+t.vol = 200;
+t = tracks[0];                   ( whole-value copy, same type )
+```
+
+A `struct` declares field offsets at type-check time (v2 fields are
+scalars, previously-declared structs, or fixed arrays of either —
+no `mod`, no pointers; order matters, so forward references and
+cycles fail as unknown types). Paths chain through nesting and
+arrays, and same-type struct values copy whole with `=` — but
+comparing, passing or returning a whole struct is still a compile
+error with a field-directed message. Struct-typed variables take no
+initializer (declare bare, then copy or assign fields); buffers of
 structs are the fix for parallel-array desync. A trailing `;` after
 the closing brace is accepted.
 

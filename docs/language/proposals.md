@@ -128,7 +128,10 @@ field-offset environments, and the combined Index+Field codegen paths
 in both directions. The shift loop collapses from two lines to one,
 and the desync class disappears by construction.
 (obsolete — implemented on `dev` as scoped, plus locals and strict
-whole-value rejection; see [declarations](declarations.md).)
+whole-value rejection; see [declarations](declarations.md). v2 on
+`dev`: nested structs, fixed array fields, chained paths and
+same-type whole-value `=` via a stashed-pointer byte copy; params,
+returns and comparison stay field-wise.)
 
 ## 5. Ring buffer type — accept as library first, correct the framing
 

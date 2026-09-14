@@ -1,6 +1,9 @@
 |00
     @double__x $2
     @grid_pos $2
+    @pair0 $5
+    @pair1 $5
+    @baddr $2
     @main__m $2
     @main__d $2
     @main__total $2
@@ -29,6 +32,7 @@
 
 |0100
 #000f #0010 DIV2k MUL2 SUB2 .grid_pos STZ2
+;blip .baddr STZ2
 ;etal_meta .System/metadata DEO2
 ;main JSR2
 HALT
@@ -108,6 +112,12 @@ JMP2r
 #0030 #0001 ;late JSR2 ADD2 NIP .Console/write DEO
 #0030 .main__ok LDZ #00 SWP ADD2 NIP .Console/write DEO
 #0030 .main__ng LDZ #00 SWP SUB #00 SWP ADD2 NIP .Console/write DEO
+#01 ;pair0 STA
+#02 ;pair0 #0001 ADD2 STA
+#03 .pair0 #02 ADD STZ
+#04 ;pair0 #0003 ADD2 #0001 ADD2 STA
+;pair0 STH2 ;pair1 STH2 STH2kr STH2r STH2kr ROT2 STH2 #0000 ADD2 LDA #00 SWP SWP2 #0000 ADD2 STA STH2kr STH2r STH2kr ROT2 STH2 #0001 ADD2 LDA #00 SWP SWP2 #0001 ADD2 STA STH2kr STH2r STH2kr ROT2 STH2 #0002 ADD2 LDA #00 SWP SWP2 #0002 ADD2 STA STH2kr STH2r STH2kr ROT2 STH2 #0003 ADD2 LDA #00 SWP SWP2 #0003 ADD2 STA STH2kr STH2r STH2kr ROT2 STH2 #0004 ADD2 LDA #00 SWP SWP2 #0004 ADD2 STA STH2r POP2 STH2r POP2
+#0030 ;pair1 LDA #00 SWP ADD2 ;pair1 #0001 ADD2 LDA #00 SWP ADD2 .pair1 #02 ADD LDZ #00 SWP ADD2 ;pair1 #0003 ADD2 #0001 ADD2 LDA #00 SWP ADD2 NIP .Console/write DEO
 JMP2r
 
 @late ( -- )

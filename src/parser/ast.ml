@@ -11,9 +11,9 @@ type typ =
      the variable; stores wrap automatically. Modulus is a compile-time
      constant fitting the base (u8: 1..256, u16: 1..65535). *)
   | TypMod of typ * int
-  (* Named struct value (proposal 4 v1): whole values never touch the
-     stack — only `.field` access compiles. Sizes come from the
-     declaration (checked before use). *)
+  (* Named struct value (proposal 4 v2): whole values move only via
+     same-type `=` (a byte copy); everything else uses `.field`
+     paths. Sizes come from the declaration (checked before use). *)
   | TypStruct of string
 
 type binop =
@@ -137,11 +137,12 @@ type buffer_decl = {
   buf_elem: typ;
 }
 
-(* A named struct (proposal 4 v1): field offsets are computed from
+(* A named struct (proposal 4 v2): field offsets are computed from
    field types at declaration time. Structs live in buffers (arrays
    of rows) and plain variables (single rows, zero-page slots);
-   only `.field` access compiles — whole values never touch the
-   stack. v1 fields are scalar u8/u16/bool. *)
+   fields chain (nesting, fixed arrays) and same-type values copy
+   whole with `=`; other whole-value uses are compile errors.
+   Fields are scalars, structs, or fixed arrays of either. *)
 type struct_decl = {
   struct_name: string;
   struct_fields: (string * typ) list;

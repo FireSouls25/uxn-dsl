@@ -12,7 +12,13 @@ grid_pos: u16 mod 16 = 15;
 
 Pt :: struct { x: u8; y: u8; };
 
+Nib :: struct { lo: u8; hi: u8; };
+Pair :: struct { n: Nib; tag: u8; hist: [2] u8; };
+
 buffer pts[2]: Pt;
+
+pair0: Pair;
+pair1: Pair;
 
 data blip = file("blip.wav");
 
@@ -60,6 +66,12 @@ main :: fn() {
     varvara.console.write(48 + late(1));
     varvara.console.write(48 + ok);
     varvara.console.write(48 + -ng);
+    pair0.n.lo = 1;
+    pair0.n.hi = 2;
+    pair0.tag = 3;
+    pair0.hist[1] = 4;
+    pair1 = pair0;
+    varvara.console.write(48 + pair1.n.lo + pair1.n.hi + pair1.tag + pair1.hist[1]);
 }
 
 late :: fn(x: u16) -> u16 {
