@@ -135,6 +135,18 @@ zero `success` reads as "not done yet" — stat first). Needs the
 `FileA` device (copy block in `file.ux` header); paths resolve
 against the emulator's working directory.
 
+## font.ux
+
+8×8 1bpp text over a game-declared Screen: `font8x8` holds printable
+ASCII 32–126 (95 glyphs × 8 rows, MSB-first, 760 bytes — the import
+cost), `draw_char` / `draw_char_mode` blit one cell (any byte is
+safe: `glyph_clamp` folds outside 32–126 to `?`), and
+`draw_string` walks a NUL-terminated string — literal or buffer, 8px
+per cell, `\n` starting the next row. `glyph_addr` is the pure
+address math both macros share (gated headlessly in `test_font`;
+glyph shapes are eyeballed from the `@font8x8` blob). Needs the
+`Screen` device at call sites only.
+
 ## gfx3d.ux
 
 Software 3D wireframe (Varvara has no 3D): model units are pixels

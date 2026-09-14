@@ -56,6 +56,7 @@ bindings, then function locals/params, then globals, in splice order.
 | `NOTE_*`, `sfx`, `sq32` | consts + data + fn (audio) | `lib/audio.ux` | [stdlib](stdlib.md#audioux-songux) |
 | `song_next/fire/tick`, `Note` | fns + struct (sequencer) | `lib/song.ux` | [stdlib](stdlib.md#audioux-songux) |
 | `file_read/write/stat/delete_req`, `file_poll/on_event` | macros + globals (files) | `lib/file.ux` | [stdlib](stdlib.md#fileux) |
+| `draw_char`, `draw_string`, `glyph_clamp/addr` | macros + data + fns (text) | `lib/font.ux` | [stdlib](stdlib.md#fontux) |
 | `screen_size`, `blit`, `clear`, `theme`, `SPRITE_*`, `PIXEL_*` | macros/consts (screen) | `lib/screen.ux` | [stdlib](stdlib.md#screenux) |
 | `obj_spawn/move/hide/draw`, `draw_all`, `OBJ_*` | fns/macros (objects) | `lib/object.ux` | [stdlib](stdlib.md#objectux-animux) |
 | `anim_play/step` | fns (animation) | `lib/anim.ux` | [stdlib](stdlib.md#objectux-animux) |

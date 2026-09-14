@@ -169,6 +169,7 @@ let rec composite_node_typ env = function
        (try List.assoc n env.local_vars
         with Not_found -> List.assoc n env.global_vars).typ
      with Not_found -> failwith (Printf.sprintf "undefined variable `%s`" n))
+  | Ast.StringLit _ -> Ast.TypPointer Ast.TypU8
   | Ast.Index (a, _) ->
     (match composite_node_typ env a with
      | Ast.TypArray (e, _) | Ast.TypPointer e -> e
@@ -786,9 +787,16 @@ and index_array_info env arr =
           (resolve_size env elem, true)
         | Ast.TypPointer elem -> (typ_size elem, false)
         | _ -> failwith (Printf.sprintf "`%s` is not an array" n))
-     with Not_found ->
-       failwith (Printf.sprintf "undefined array `%s`" n))
-  | _ -> (2, false)
+      with Not_found ->
+        failwith (Printf.sprintf "undefined array `%s`" n))
+  | _ ->
+    (* Literals and substituted paths (e.g. a macro `&u8` param fed a
+       string literal) carry a known element type — size from it
+       instead of assuming short. Anything opaque keeps the legacy 2. *)
+    (match try Some (composite_node_typ env arr) with _ -> None with
+     | Some (Ast.TypArray (e, _)) | Some (Ast.TypPointer e) ->
+       (resolve_size env e, false)
+     | _ -> (2, false))
 
 (* Emit base-address + scaled index for arr[index], leaving the absolute
    address (short) on the stack. Returns the element size in bytes. *)

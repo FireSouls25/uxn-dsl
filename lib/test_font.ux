@@ -1,0 +1,40 @@
+( font harness: clamp/addr math gates plus crash-free draws of a
+  literal, a newline string and a buffer (with an out-of-range byte
+  exercising the `?` clamp) to a dummy screen. Glyph shapes are
+  eyeballed from the @font8x8 blob, not here.
+  Expected console bytes: 3f 3f 20 41 7e 3f 3f 08 f0 )
+device Screen 32 {
+    vector: 2
+    width: 2
+    height: 2
+    x: 2
+    y: 2
+    addr: 2
+    sprite: 1
+}
+import "font.ux"
+
+fbuf: [8] u8;
+
+main :: fn() {
+    Screen.width = 128;
+    Screen.height = 128;
+    varvara.console.write(glyph_clamp(9));
+    varvara.console.write(glyph_clamp(31));
+    varvara.console.write(glyph_clamp(32));
+    varvara.console.write(glyph_clamp(65));
+    varvara.console.write(glyph_clamp(126));
+    varvara.console.write(glyph_clamp(127));
+    varvara.console.write(glyph_clamp(200));
+    d1: u16 = glyph_addr(66) - glyph_addr(65);
+    varvara.console.write(d1);
+    d2: u16 = glyph_addr(126) - glyph_addr(32);
+    varvara.console.write(d2);
+    draw_string(0, 0, "Hi!");
+    draw_string(0, 8, "A\nB");
+    fbuf[0] = 200;
+    fbuf[1] = 67;
+    fbuf[2] = 0;
+    draw_string(0, 16, fbuf);
+    draw_char(120, 120, 90);
+}

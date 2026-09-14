@@ -65,7 +65,11 @@ stay field-wise), with a `test_struct` console gate and golden
 coverage. File device: `lib/file.ux` split-phase FileA macros
 (request, inline `success` on native, `file_poll`/`file_on_event`
 for the web vector; stat-first, never zero bytes), CWD-relative
-paths, `test_file` round-trip gate. Software 3D: `trig.ux`
+paths, `test_file` round-trip gate. Font/text: `lib/font.ux`
+in-repo 8×8 font (ASCII 32–126) with `draw_char` / `draw_string`
+macros (`\n` rows, `?` clamp) and gated `glyph_clamp` /
+`glyph_addr` math; also fixes silent stride-2 reads when indexing
+string literals. Software 3D: `trig.ux`
 (self-built turns256 sine table) and `gfx3d.ux` (rotate/project/DDA
 wireframe) with a spinning-cube demo. Dead-function elimination
 (reachable-from-main, raw disables) so libraries don't eat zero-page.

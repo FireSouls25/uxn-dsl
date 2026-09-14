@@ -221,11 +221,13 @@ since this machine is centered on direct UI work:
   square wave and one-shot `sfx`; `lib/song.ux` sequences `Note`
   tables through Audio0. A `sound` sketch (one-shot blip on eat,
   using a tiny square-wave blob) is the right first artifact.
-- **Text.** There is no font story: no glyph tables, no
-  `draw_char`/`draw_string`. Orca-style games need these for scores
-  and menus. Recommended as a *library* (`font.ux`: an 8×8 font blob
-  plus blit routines reusing proposal 6's macro pattern), not a
-  compiler feature.
+ - **Text.** Landed on `dev`: `lib/font.ux` is an in-repo 8×8
+  1bpp font (printable ASCII 32–126, 760 bytes) plus `draw_char` /
+  `draw_string` blit macros reusing the reviewed-macro pattern
+  (`\n` newlines, out-of-range clamps to `?`), with pure
+  `glyph_clamp` / `glyph_addr` fns gated headlessly. Scores and
+  menus draw from buffers or literals; the compiler still has no
+  font feature, per the library-first recommendation.
 - **Sprite/pixel mode bits.** The `Screen/sprite` mode nibble (1bpp
   vs 2bpp, layer, flips) and `pixel` fill bits are currently magic
   numbers (`Screen.sprite = 1`). Named `::` constants already express

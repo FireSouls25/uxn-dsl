@@ -72,6 +72,7 @@ main :: fn() {
     pair0.hist[1] = 4;
     pair1 = pair0;
     varvara.console.write(48 + pair1.n.lo + pair1.n.hi + pair1.tag + pair1.hist[1]);
+    varvara.console.write("AB"[1]);
 }
 
 late :: fn(x: u16) -> u16 {
