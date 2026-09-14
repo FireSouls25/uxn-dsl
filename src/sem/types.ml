@@ -90,6 +90,17 @@ let reject_struct_value what typ =
   if contains_struct typ then
     failwith (Printf.sprintf "%s: cannot use a whole struct value (access `.field` instead)" what)
 
+(* Whole arrays never touch the stack as values either — only Index
+   (element access) compiles. Structs are rejected separately above;
+   pointers are fine (they are addresses). *)
+let is_array_value = function
+  | TypArray _ -> true
+  | _ -> false
+
+let reject_array_value what typ =
+  if is_array_value typ then
+    failwith (Printf.sprintf "%s: cannot use a whole array value (index an element)" what)
+
 (* v2: does an Ident/Index/Field chain touch a struct-typed node?
    Devices/groups never do (they aren't vars), so legacy paths stay
    untouched wherever this is false. *)
@@ -232,8 +243,12 @@ let rec type_of_expr env expr =
     | Eq | Neq | Lt | Gt | Le | Ge ->
       if contains_struct left_typ || contains_struct right_typ then
         failwith "cannot compare structs (compare fields)";
+      if is_array_value left_typ || is_array_value right_typ then
+        failwith "cannot compare whole arrays (compare elements)";
       TypBool
     | AndAnd | OrOr ->
+      if is_array_value left_typ || is_array_value right_typ then
+        failwith "cannot combine whole arrays with && / || (compare elements)";
       TypBool
     | Not ->
       (* Unreachable: the parser only builds Not as UnOp. *)
@@ -241,13 +256,17 @@ let rec type_of_expr env expr =
   | UnOp (op, expr) ->
     let expr_typ = type_of_expr env expr in
     reject_struct_value "unary operator" expr_typ;
+    reject_array_value "unary operator" expr_typ;
     (match op with
     | Neg -> mod_base expr_typ
     | NotBit -> mod_base expr_typ
     | Not -> TypBool)
   | Call (func_expr, args) ->
     (* Type check all arguments *)
-    List.iter (fun arg -> ignore (type_of_expr env arg)) args;
+    List.iter (fun arg ->
+      let arg_typ = type_of_expr env arg in
+      reject_array_value "call argument" arg_typ
+    ) args;
     (match func_expr with
     | Ident name ->
       (match lookup_func env name with
@@ -365,12 +384,16 @@ let rec type_of_expr env expr =
     let left_typ = type_of_expr env left in
     let right_typ = type_of_expr env right in
     (* v2: same-type struct values copy whole (`a = b` lowers to a
-       byte copy). Anything else holding a struct is still an error. *)
+       byte copy), as do same-type/length arrays. Anything else
+       holding a struct or array is still an error. *)
     (match left_typ, right_typ with
      | TypStruct s1, TypStruct s2 when s1 = s2 -> left_typ
+     | TypArray (e1, n1), TypArray (e2, n2) when e1 = e2 && n1 = n2 -> left_typ
      | _ ->
        if contains_struct left_typ || contains_struct right_typ then
          failwith "cannot assign whole structs of different type (same-type struct values copy with `=`)";
+       if is_array_value left_typ || is_array_value right_typ then
+         failwith "cannot assign arrays of different element type or length (same arrays copy with `=`)";
        if right_typ = TypVoid || assign_compat left_typ right_typ ||
           (match left with Field _ -> true | _ -> false) then
          left_typ
@@ -410,21 +433,28 @@ let rec type_check_stmt env stmt =
   | ExprStmt expr ->
     let t = type_of_expr env expr in
     (match expr, t with
-     (* v2: a same-type struct copy is a complete statement (the
+     (* v2: a same-type struct/array copy is a complete statement (the
         Assign case already rejected mixed types). It leaves nothing
         on the stack, so bare `a = b;` is balanced. *)
      | Assign _, TypStruct _ -> ()
-     | _ -> reject_struct_value "expression statement" t)
+     | Assign _, t when is_array_value t -> ()
+     | _ ->
+       reject_struct_value "expression statement" t;
+       reject_array_value "expression statement" t)
   | Return expr ->
     (match expr with
     | Some expr ->
-      reject_struct_value "return value" (type_of_expr env expr)
+      let t = type_of_expr env expr in
+      reject_struct_value "return value" t;
+      reject_array_value "return value" t
     | None -> ())
   | BrkStmt -> ()
   | Goto _ -> ()
   | Label _ -> ()
   | RPush expr ->
-    reject_struct_value "rpush" (type_of_expr env expr)
+    let t = type_of_expr env expr in
+    reject_struct_value "rpush" t;
+    reject_array_value "rpush" t
   | RPop -> ()
   | RPeek -> ()
   | RawStmt _ -> ()
@@ -479,12 +509,16 @@ let rec type_check_stmt env stmt =
     let expr_typ = type_of_expr env expr in
     if contains_struct expr_typ then
       failwith (Printf.sprintf "constant `%s` cannot hold a whole struct" name);
+    if is_array_value expr_typ then
+      failwith (Printf.sprintf "constant `%s` cannot hold a whole array" name);
     let t =
       match typopt with
       | Some t ->
         validate_type env (Printf.sprintf "constant `%s`" name) t;
         if contains_struct t then
           failwith (Printf.sprintf "constant `%s` cannot be struct-typed" name);
+        if is_array_value t then
+          failwith (Printf.sprintf "constant `%s` cannot be array-typed" name);
         if assign_compat t expr_typ then t
         else failwith (Printf.sprintf "Type mismatch in constant declaration for %s" name)
       | None ->
@@ -548,12 +582,16 @@ let type_check_program program =
       let expr_typ = type_of_expr global_env expr in
       if contains_struct expr_typ then
         failwith (Printf.sprintf "constant `%s` cannot hold a whole struct" name);
+      if is_array_value expr_typ then
+        failwith (Printf.sprintf "constant `%s` cannot hold a whole array" name);
       let t =
         match typopt with
         | Some t ->
           validate_type global_env (Printf.sprintf "constant `%s`" name) t;
           if contains_struct t then
             failwith (Printf.sprintf "constant `%s` cannot be struct-typed" name);
+          if is_array_value t then
+            failwith (Printf.sprintf "constant `%s` cannot be array-typed" name);
           if assign_compat t expr_typ then t
           else failwith (Printf.sprintf "Type mismatch in global constant declaration for %s" name)
         | None ->

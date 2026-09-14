@@ -1,0 +1,15 @@
+( mouse harness: edge polls over synthetic button states (live
+  clicks need a display; headless runs feed states by hand).
+  Expected console bytes: 01 00 02 00 00 01 04 03 )
+import "mouse.ux"
+
+main :: fn() {
+    varvara.console.write(mouse_poll(1));
+    varvara.console.write(mouse_poll(1));
+    varvara.console.write(mouse_poll(3));
+    varvara.console.write(mouse_poll(3));
+    varvara.console.write(mouse_poll(0));
+    varvara.console.write(MOUSE_LEFT);
+    varvara.console.write(MOUSE_MIDDLE);
+    varvara.console.write(MOUSE_RIGHT);
+}

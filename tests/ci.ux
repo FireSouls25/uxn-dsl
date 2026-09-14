@@ -20,6 +20,9 @@ buffer pts[2]: Pt;
 pair0: Pair;
 pair1: Pair;
 
+grid_a: [4] u8;
+grid_b: [4] u8;
+
 data blip = file("blip.wav");
 
 baddr: u16 = &blip;
@@ -73,6 +76,12 @@ main :: fn() {
     pair1 = pair0;
     varvara.console.write(48 + pair1.n.lo + pair1.n.hi + pair1.tag + pair1.hist[1]);
     varvara.console.write("AB"[1]);
+    grid_a[0] = 7;
+    grid_a[1] = 8;
+    grid_a[2] = 9;
+    grid_a[3] = 10;
+    grid_b = grid_a;
+    varvara.console.write(48 + grid_b[0] + grid_b[1] + grid_b[2] + grid_b[3] - 34);
 }
 
 late :: fn(x: u16) -> u16 {

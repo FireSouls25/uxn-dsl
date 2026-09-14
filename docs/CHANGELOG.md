@@ -72,7 +72,13 @@ macros (`\n` rows, `?` clamp) and gated `glyph_clamp` /
 string literals. Multitrack audio: `song.ux` v2 `Track` rows
 through Audio0-3 (`track_next` pure per voice, `track_fire0-3`
 macros, `song_tick` / `song_tick_all`; single-song API retired,
-Megalovania migrated). Software 3D: `trig.ux`
+Megalovania migrated). Mouse: `lib/mouse.ux` edge polls
+(`mouse_poll`, `MOUSE_*` from the SDL mapping) over a corrected
+Mouse block, synthetic-state gate. Arrays: same-type/length whole
+copy with `=` (assign + init); every other whole-array use is a
+compile error. Scenes: pause stack (`scene_push/pop`), `scene_prev`,
+layered drawing (`draw_all_layered`, `obj_draw_mode`). Software
+3D: `trig.ux`
 (self-built turns256 sine table) and `gfx3d.ux` (rotate/project/DDA
 wireframe) with a spinning-cube demo. Dead-function elimination
 (reachable-from-main, raw disables) so libraries don't eat zero-page.

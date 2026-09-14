@@ -60,8 +60,9 @@ bindings, then function locals/params, then globals, in splice order.
 | `screen_size`, `blit`, `clear`, `theme`, `SPRITE_*`, `PIXEL_*` | macros/consts (screen) | `lib/screen.ux` | [stdlib](stdlib.md#screenux) |
 | `obj_spawn/move/hide/draw`, `draw_all`, `OBJ_*` | fns/macros (objects) | `lib/object.ux` | [stdlib](stdlib.md#objectux-animux) |
 | `anim_play/step` | fns (animation) | `lib/anim.ux` | [stdlib](stdlib.md#objectux-animux) |
-| `layers_hit`, `obj_cell_hit`, `obj_aabb_hit` | fns (collision) | `lib/collide.ux` | [stdlib](stdlib.md#collideux-sceneux-menuux) |
-| `scene_go`, `wipe`, `menu_poll/items/next/prev` | fns/macros (scenes+menus) | `lib/scene.ux`, `lib/menu.ux` | [stdlib](stdlib.md#collideux-sceneux-menuux) |
+| `layers_hit`, `obj_cell_hit`, `obj_aabb_hit` | fns (collision) | `lib/collide.ux` | [stdlib](stdlib.md#collideux-sceneux-menuux-mouseux) |
+| `scene_go/push/pop`, `wipe`, `menu_poll/items/next/prev` | fns/macros (scenes+menus) | `lib/scene.ux`, `lib/menu.ux` | [stdlib](stdlib.md#collideux-sceneux-menuux-mouseux) |
+| `mouse_poll`, `MOUSE_*` | fn + consts (mouse edges) | `lib/mouse.ux` | [stdlib](stdlib.md#collideux-sceneux-menuux-mouseux) |
 | System / Screen / Controller / Mouse / DateTime / FileA / Console | devices | `devices.ux`, `worm.ux`, … | [devices](devices.md) |
 | `wrap` | fn (snake + 2 worm variants) | snake, worm, worm_full | [snake](snake.md#wrap), [stub](worm.md#wrap-wormux-stub), [full](worm.md#wrap-worm_fullux) |
 | `set_dir` | fn | snake `logic.ux` | [snake](snake.md#set_dir) |

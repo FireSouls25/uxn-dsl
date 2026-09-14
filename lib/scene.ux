@@ -1,16 +1,43 @@
-( lib/scene.ux — scene id + transitions.
+( lib/scene.ux — scene id + transitions + a pause-menu stack.
   Scenes themselves are a game-side `match scene { ... }` dispatch
   over setup/update functions (see the demo game); what is shareable
-  lives here: the current id, switching, and fullscreen wipes.
+  lives here: the current id, the previous id, switching, fullscreen
+  wipes, and a small stack (pause menus: push the menu, pop resumes
+  exactly where the game was).
   Needs the Screen device (for wipe); palette fades stay game-side
   because palettes can't be read back. )
 
 import "screen.ux"
 
 scene: u8 = 0;
+scene_prev: u8 = 0;
 
 scene_go :: fn(id: u8) {
+    scene_prev = scene;
     scene = id;
+}
+
+( Pause stack, 8 deep; pushing when full and popping when empty
+  are ignored (never corrupt). )
+buffer scene_stack[8]: u8;
+scene_sp: u8 = 0;
+
+scene_push :: fn(id: u8) {
+    if scene_sp < 8 {
+        scene_stack[scene_sp] = scene;
+        scene_sp = scene_sp + 1;
+    }
+    scene_go(id);
+}
+
+( Pop back to the scene under the top; returns the scene (top when
+  the stack is empty). )
+scene_pop :: fn() -> u8 {
+    if scene_sp != 0 {
+        scene_sp = scene_sp - 1;
+        scene_go(scene_stack[scene_sp]);
+    }
+    return scene;
 }
 
 ( Fullscreen wipe in a fill mode (see screen.ux PIXEL_*). A macro

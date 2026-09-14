@@ -139,7 +139,9 @@ v: u16 = tail[i + 1];    ( LDA/LDA2; u16 elements scale by 2 )
 ```
 
 Only global arrays and buffers are indexable; there are no array
-literals or initializers, and no bounds checks — like the hardware.
+literals, and no bounds checks — like the hardware. Same-type and
+same-length arrays copy whole with `=` (assignments and
+initializers); every other whole-array use is a compile error.
 
 ## Structs
 

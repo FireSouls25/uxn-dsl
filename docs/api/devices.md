@@ -98,18 +98,21 @@ device Mouse 144 {
     x: 2
     y: 2
     state: 1
-    chord: 1
-    pad: 4
-    scrolly: 1
-    scrolly_hb: 1
-    scrolly_lb: 1
+    pad: 3
+    scrollx: 2
+    scrolly: 2
 }
 ```
 
-Declared (and vectored to a `brk`-only `on_mouse`) in both games;
-neither game reads it yet. `test_device.ux` shows the smaller shape
-(`x`, `y`, `state`) with a `handler :: fn()` that copies
-`Mouse.x` → `Screen.x`.
+Motion/button/scroll vectors (`mouse_pos/down/up/scroll` in the
+emulator source): `x`/`y` track always, `state` is the button
+bitmask, scroll ports are one-shot deltas with inverted Y (zeroed
+after the vector fires). Older game blocks name these ports
+differently (`chord`, `scrolly_hb/lb`) — untouched and unread, so
+harmless, but new code takes the block above. `lib/mouse.ux` adds
+edge polls (`mouse_poll(Mouse.state)`, `MOUSE_*` masks) over it;
+`test_device.ux` shows the smaller shape (`x`, `y`, `state`) with
+a `handler :: fn()` that copies `Mouse.x` → `Screen.x`.
 
 ## `device DateTime 192`
 

@@ -61,15 +61,39 @@ obj_move :: fn(i: u16, x: u16, y: u16) {
 }
 
 ( Macros: they expand at call sites, so importing object.ux never
-  forces a Screen device — only drawing call sites need one. )
+   forces a Screen device — only drawing call sites need one. )
 macro obj_draw(i: u16) {
     if objs[i].flags & OBJ_VISIBLE != 0 {
         blit(objs[i].x, objs[i].y, objs[i].tile, SPRITE_NORM);
     }
 }
 
+( Same, with an explicit sprite mode (layer bit, flips, color) —
+  the per-object half of the layer story. )
+macro obj_draw_mode(i: u16, mode: u8) {
+    if objs[i].flags & OBJ_VISIBLE != 0 {
+        blit(objs[i].x, objs[i].y, objs[i].tile, mode);
+    }
+}
+
 macro draw_all() {
     for i in 0..16 {
         obj_draw(i);
+    }
+}
+
+( Gameplay layers 0-3 back to front (flags bits 2-3, see collide.ux):
+  four slot-order passes, one per layer, so a background object in a
+  high slot never overdraws foreground. )
+macro draw_all_layered() {
+    for l in 0..4 {
+        want: u16 = l * 4;
+        for i in 0..16 {
+            if objs[i].flags & OBJ_VISIBLE != 0 {
+                if objs[i].flags & OBJ_LAYERMASK == want {
+                    obj_draw(i);
+                }
+            }
+        }
     }
 }

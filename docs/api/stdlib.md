@@ -38,20 +38,30 @@ from the emulator source (`SPRITE_2BPP/LAYER/FLIPY/FLIPX`,
 Fixed object rows: `Obj :: struct { x, y, tile, flags }` in
 `buffer objs[16]`, indices are `u16` (255 = no slot), flags are
 visible/solid/layer bits. `obj_spawn/move/hide/hide_all/free`,
-`obj_draw`/`draw_all` (macros), `OBJ_*` consts. Animation is frame
-tables plus per-object base/len/rate/tick with `anim_play/step`.
+`obj_draw`/`draw_all` (macros), `obj_draw_mode` (explicit sprite
+mode per object), `draw_all_layered` (gameplay layers 0–3 back to
+front, so high slots never overdraw foreground), `OBJ_*` consts.
+Animation is frame tables plus per-object base/len/rate/tick with
+`anim_play/step`.
 
-## collide.ux, scene.ux, menu.ux
+## collide.ux, scene.ux, menu.ux, mouse.ux, mouse.ux
 
 `layers_hit` (same layer and at least one solid — edible food,
 solid walls, pass-through ghosts), `obj_cell_hit` (8px cells),
 `obj_aabb_hit` (explicit sizes). Scenes are a game-side
-`match scene` dispatch; the module holds the id, `scene_go`, and
-`wipe`. Menus are edge polls (`menu_poll` — call once per frame),
-`menu_items/next/prev` with wraparound; act on `poll & MASK`
-idioms, never equality. The `examples/objdemo/` game (untracked,
-like the other examples) plays all phases together: title menu,
-animated player, layered walls, score-to-win, game-over loop.
+`match scene` dispatch; the module holds the id, `scene_prev`,
+`scene_go`, `wipe`, and an 8-deep pause stack (`scene_push/pop`
+— pop resumes exactly where the game was; over/underflow
+ignored). Menus are edge polls (`menu_poll` — call once per
+frame), `menu_items/next/prev` with wraparound; act on `poll & MASK`
+idioms, never equality. Mouse is the same edge shape over
+game-read state (`mouse_poll(Mouse.state)`, `MOUSE_LEFT/MIDDLE/
+RIGHT/X1` from the emulator's SDL mapping); position and scroll
+stay raw port reads (scroll is one-shot with inverted Y) — live
+clicks need a display, so the gate feeds synthetic states. The
+`examples/objdemo/` game (untracked, like the other examples)
+plays all phases together: title menu, animated player, layered
+walls, score-to-win, game-over loop.
 
 ## fix16.ux
 

@@ -244,8 +244,13 @@ since this machine is centered on direct UI work:
   Never request zero bytes (zero `success` reads as pending — stat
   first); paths are CWD-relative. `lib/test_file.ux` gates a full
   write/stat/read/poll/delete round-trip.
-- **Mouse.** Declared and vectored, never read by any game. Usable
-  today via `Mouse.x/y DEI2`; no sugar proposed until a game needs it.
+ - **Mouse.** Landed on `dev`: `lib/mouse.ux` has `MOUSE_*` masks
+  (from the emulator's SDL mapping) and `mouse_poll` edge detection
+  mirroring `menu_poll`, over a corrected `device Mouse 144` block
+  (scroll at 9a/9c is one-shot with inverted Y — the old
+  `chord`/`scrolly_hb` block in games was never read). Position
+  stays a raw port read; live clicks need a display, so the gate
+  feeds synthetic states.
 - **System/expansion banks.** Fill/copy operations beyond 64K are
   unexposed. Out of scope until a program outgrows addressable
   memory; when it does, expose the three ops, not the raw ports.

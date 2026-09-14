@@ -182,13 +182,15 @@ let rec composite_node_typ env = function
      | _ -> failwith (Printf.sprintf "cannot access field `%s` of non-struct value" f))
   | _ -> failwith "not a struct/array path"
 
-(* v2: `dst = src` is a whole-struct copy iff both sides resolve to
-   the same named struct. Never raises (boolean probe for a guard);
-   the checked program decides — legacy arms keep their errors. *)
-let is_struct_copy env l r =
+(* v2: `dst = src` is a whole-value copy iff both sides are the
+   same named struct or the same array type/length. Never raises
+   (boolean probe for a guard); the checked program decides —
+   legacy arms keep their errors. *)
+let is_whole_copy env l r =
   match (try Some (composite_node_typ env l, composite_node_typ env r)
          with _ -> None) with
   | Some (Ast.TypStruct s1, Ast.TypStruct s2) -> s1 = s2
+  | Some (Ast.TypArray (e1, n1), Ast.TypArray (e2, n2)) -> e1 = e2 && n1 = n2
   | _ -> false
 
 (* Size of a type that may name a struct (buffers of structs, struct
@@ -635,12 +637,15 @@ let rec codegen_expr env expr =
     emit env ";%s" name
   | RawLit s ->
     emit env "%s" s
-  | Assign (left, right) when is_struct_copy env left right ->
-    (* v2: same-type struct values copy whole (checked). *)
+  | Assign (left, right) when is_whole_copy env left right ->
+    (* v2: same-type struct/array values copy whole (checked). Size
+       is shared, so either side sizes it. *)
     (match composite_node_typ env left with
      | Ast.TypStruct s ->
-       codegen_struct_copy env left right (resolve_size env (Ast.TypStruct s))
-     | _ -> failwith "internal error: struct copy of non-struct")
+       codegen_whole_copy env left right (resolve_size env (Ast.TypStruct s))
+     | Ast.TypArray (e, n) ->
+       codegen_whole_copy env left right (n * resolve_size env e)
+     | _ -> failwith "internal error: whole copy of non-copyable")
   | Assign (left, right) ->
     (match left with
     | Ident name ->
@@ -879,7 +884,8 @@ and codegen_arrayfield_addr env arr idx =
   emit env " ADD2";
   esz
 
-(* v2: `dst = src` for same-type struct values — a byte copy with
+(* v2: `dst = src` for same-type struct or array values — a byte
+   copy with
    both pointers stashed (rstack [src dst], dst on top). LDA leaves
    one byte under the short dst address, so each byte zero-extends
    (`#00 SWP`, the usual idiom) before SWP2. Per byte the main stack
@@ -888,7 +894,7 @@ and codegen_arrayfield_addr env arr idx =
    single-evaluation:
      STH2kr STH2r STH2kr ROT2 STH2 #k ADD2 LDA #00 SWP SWP2 #k ADD2 STA
    then both pointers pop. *)
-and codegen_struct_copy env dst src size =
+and codegen_whole_copy env dst src size =
   codegen_composite_addr env src;
   emit env " STH2 ";
   codegen_composite_addr env dst;
@@ -1015,10 +1021,15 @@ let rec codegen_stmt env stmt =  match stmt with
       let addr = add_local_var env name typ in
       match init with
       | Some expr ->
-        let size = resolve_size env typ in
-        codegen_rhs env expr size;
-        emit_mod_reduce env typ;
-        if size = 1 then emit env " .%s STZ\n" addr else emit env " .%s STZ2\n" addr
+        (match typ with
+         | Ast.TypArray _ ->
+           (* Whole-array init copies (checked same type/length). *)
+           codegen_whole_copy env (Ast.Ident name) expr (resolve_size env typ)
+         | _ ->
+           let size = resolve_size env typ in
+           codegen_rhs env expr size;
+           emit_mod_reduce env typ;
+           if size = 1 then emit env " .%s STZ\n" addr else emit env " .%s STZ2\n" addr)
       | None -> ()
     end else begin
       (* Global variable - use zero-page addressing (label form;
@@ -1036,11 +1047,15 @@ let rec codegen_stmt env stmt =  match stmt with
       in
       match init with
       | Some expr ->
-        codegen_rhs env expr size;
-        emit_mod_reduce env typ;
-        (* Label form, like every other store: raw `$hh` does not
-           assemble to a zero-page address in drifblim. *)
-        if size = 1 then emit env " .%s STZ\n" name else emit env " .%s STZ2\n" name
+        (match typ with
+         | Ast.TypArray _ ->
+           codegen_whole_copy env (Ast.Ident name) expr size
+         | _ ->
+           codegen_rhs env expr size;
+           emit_mod_reduce env typ;
+           (* Label form, like every other store: raw `$hh` does not
+              assemble to a zero-page address in drifblim. *)
+           if size = 1 then emit env " .%s STZ\n" name else emit env " .%s STZ2\n" name)
       | None -> ()
     end
   | ConstDecl (name, typopt, expr) ->
