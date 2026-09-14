@@ -232,11 +232,14 @@ since this machine is centered on direct UI work:
   these — what's missing is documentation mapping each bit, which
   belongs in [devices](../api/devices.md) alongside the
   port tables.
-- **File device.** Directory listings, chunked reads/writes and the
-  append/delete protocol all work through declared ports today, but
-  the vector-driven async pattern (request on one vector, consume on
-  another) wants a callback-door idiom documented before anyone
-  should rely on it. Genuine future work, not a gap in primitives.
+ - **File device.** Landed on `dev`: `lib/file.ux` has split-phase
+  FileA macros (`file_read/write/stat/delete_req` initiate,
+  `FileA.success` answers inline on native, `file_poll` /
+  `file_on_event` complete portably for the web vector) over a
+  game-declared `device FileA 160` block (see [devices](../api/devices.md)).
+  Never request zero bytes (zero `success` reads as pending — stat
+  first); paths are CWD-relative. `lib/test_file.ux` gates a full
+  write/stat/read/poll/delete round-trip.
 - **Mouse.** Declared and vectored, never read by any game. Usable
   today via `Mouse.x/y DEI2`; no sugar proposed until a game needs it.
 - **System/expansion banks.** Fill/copy operations beyond 64K are

@@ -131,3 +131,30 @@ Wall clock. Both games seed RNG from it (`seed = DateTime.second +
 DateTime.minute * 256` in snake; `DateTime.second =
 DateTime.second` in the worm stub). Test harnesses pin `seed`
 afterwards for determinism.
+
+## `device FileA 160`
+
+```ux
+device FileA 160 {
+    vector: 2
+    success: 2
+    stat: 2
+    delete: 1
+    append: 1
+    name: 2
+    length: 2
+    read: 2
+    write: 2
+}
+```
+
+Host files, relative to the emulator's working directory (paths are
+NUL-terminated bytes in RAM). Protocol, per the emulator source:
+`name` selects (and resets), `length` sizes, then writing `read` /
+`write` / `stat` fires with the RAM address — the result count lands
+in `success`. `append` (`1`) switches writes from truncate to
+append; any write to `delete` unlinks. Native operations complete
+inline; the web emulator reports through `vector` instead — see
+`lib/file.ux`, whose split-phase macros (`file_read_req` …,
+`file_poll`, `file_on_event`) cover both. `lib/test_file.ux` rounds
+a file through write/stat/read/poll/delete headlessly.

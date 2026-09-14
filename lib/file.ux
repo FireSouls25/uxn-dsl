@@ -1,0 +1,98 @@
+( lib/file.ux — Varvara FileA helpers, grounded in uxn2/src/uxn2.c
+  (File, lines 625-891): two pages (FileA a0, FileB b0) with ports
+  vector/success/stat/delete/append/name/length/read/write. Paths
+  are NUL-terminated bytes in RAM, relative to the emulator's
+  working directory (uxn2 does not sandbox further — keep names
+  bare). Games declare FileA (copy this block):
+      device FileA 160 {
+          vector: 2
+          success: 2
+          stat: 2
+          delete: 1
+          append: 1
+          name: 2
+          length: 2
+          read: 2
+          write: 2
+      }
+  Native uxn2 runs every operation INLINE (fread/fwrite/stat/unlink
+  inside the DEO; the byte count lands in `success` before the next
+  instruction). The web emulator completes LATER and reports through
+  the File vector. One split-phase API covers both: request macros
+  below, then either read `FileA.success` at once (native) or poll /
+  serve the vector (portable). Never request zero bytes: a zero
+  `success` is indistinguishable from "not done yet", so stat first
+  (`file_stat_req` reports any size, even 0, as hex — see below). )
+
+file_pending: u8 = 0;
+file_done: u8 = 0;
+file_result: u16 = 0;
+
+( Read `len` bytes of `name` into RAM at `dst`. Native: `FileA.success`
+  already holds the count (0 = missing/empty — stat first). )
+macro file_read_req(name: u16, dst: u16, len: u16) {
+    FileA.name = name;
+    FileA.length = len;
+    FileA.read = dst;
+    file_pending = 1;
+    file_done = 0;
+}
+
+( Write `len` bytes from `src` over `name` (`append` 0 = truncate,
+  1 = append; the emulator creates parent dirs). Native: `success`
+  is the count written. )
+macro file_write_req(name: u16, src: u16, len: u16, append: u8) {
+    FileA.name = name;
+    FileA.length = len;
+    FileA.append = append;
+    FileA.write = src;
+    file_pending = 1;
+    file_done = 0;
+}
+
+( Describe `name` into `buf` (`len` bytes, 4 is the classic size):
+  a file yields its size as exactly `len` lowercase hex digits
+  (`000a`), a directory yields `len` `-`, a missing path `len` `!`,
+  an over-large size `len` `?`. A directory `name` (trailing `/`)
+  makes read return `HHHH<TAB>name[/]<NL>` lines instead. )
+macro file_stat_req(name: u16, buf: u16, len: u16) {
+    FileA.name = name;
+    FileA.length = len;
+    FileA.stat = buf;
+    file_pending = 1;
+    file_done = 0;
+}
+
+( Unlink `name`. Native: `success` is 1 on success, 0 when missing. )
+macro file_delete_req(name: u16) {
+    FileA.name = name;
+    FileA.delete = 1;
+    file_pending = 1;
+    file_done = 0;
+}
+
+( Portable completion check: call every frame after a request. A
+  nonzero `success` means a native inline completion — cached at
+  once; otherwise the request stays pending until `file_on_event`
+  runs. Zero-byte native results never resolve here (stat first). )
+macro file_poll() {
+    if file_done == 0 {
+        if file_pending != 0 {
+            n: u16 = FileA.success;
+            if n != 0 {
+                file_result = n;
+                file_done = 1;
+                file_pending = 0;
+            }
+        }
+    }
+}
+
+( Call this from the game's File-vector handler
+  (`FileA.vector = &on_file`); it records a web completion the same
+  way `file_poll` records a native one. )
+macro file_on_event() {
+    file_result = FileA.success;
+    file_done = 1;
+    file_pending = 0;
+}

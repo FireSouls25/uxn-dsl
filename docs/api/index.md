@@ -32,7 +32,7 @@ bindings, then function locals/params, then globals, in splice order.
   multi-return limitation behind their shapes.
 - [Devices](devices.md) — every `device` block and port in the
   corpus: System, Console (implicit), Screen, Controller, Mouse,
-  DateTime.
+  DateTime, FileA.
 - [Snake game](snake.md) — `examples/snake/`: state, `logic.ux`
   functions, `main.ux` events, sprites and data.
 - [Worm games](worm.md) — `examples/worm/worm.ux` (stub) and
@@ -55,12 +55,13 @@ bindings, then function locals/params, then globals, in splice order.
 | `vset`, `frame_begin`, `rot_y/x`, `project`, `plot`, `edge` | fns + macro (3D wireframe) | `lib/gfx3d.ux` | [stdlib](stdlib.md#gfx3dux) |
 | `NOTE_*`, `sfx`, `sq32` | consts + data + fn (audio) | `lib/audio.ux` | [stdlib](stdlib.md#audioux-songux) |
 | `song_next/fire/tick`, `Note` | fns + struct (sequencer) | `lib/song.ux` | [stdlib](stdlib.md#audioux-songux) |
+| `file_read/write/stat/delete_req`, `file_poll/on_event` | macros + globals (files) | `lib/file.ux` | [stdlib](stdlib.md#fileux) |
 | `screen_size`, `blit`, `clear`, `theme`, `SPRITE_*`, `PIXEL_*` | macros/consts (screen) | `lib/screen.ux` | [stdlib](stdlib.md#screenux) |
 | `obj_spawn/move/hide/draw`, `draw_all`, `OBJ_*` | fns/macros (objects) | `lib/object.ux` | [stdlib](stdlib.md#objectux-animux) |
 | `anim_play/step` | fns (animation) | `lib/anim.ux` | [stdlib](stdlib.md#objectux-animux) |
 | `layers_hit`, `obj_cell_hit`, `obj_aabb_hit` | fns (collision) | `lib/collide.ux` | [stdlib](stdlib.md#collideux-sceneux-menuux) |
 | `scene_go`, `wipe`, `menu_poll/items/next/prev` | fns/macros (scenes+menus) | `lib/scene.ux`, `lib/menu.ux` | [stdlib](stdlib.md#collideux-sceneux-menuux) |
-| System / Screen / Controller / Mouse / DateTime / Console | devices | `devices.ux`, `worm.ux`, … | [devices](devices.md) |
+| System / Screen / Controller / Mouse / DateTime / FileA / Console | devices | `devices.ux`, `worm.ux`, … | [devices](devices.md) |
 | `wrap` | fn (snake + 2 worm variants) | snake, worm, worm_full | [snake](snake.md#wrap), [stub](worm.md#wrap-wormux-stub), [full](worm.md#wrap-worm_fullux) |
 | `set_dir` | fn | snake `logic.ux` | [snake](snake.md#set_dir) |
 | `next_rand` | fn | snake `logic.ux` | [snake](snake.md#next_rand) |

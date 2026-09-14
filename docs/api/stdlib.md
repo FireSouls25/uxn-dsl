@@ -117,6 +117,24 @@ middle C. Rests sustain through the envelope tail (no hard stops
 v1). Needs the `Audio0` device (copy block in `audio.ux` header);
 web builds are silent (uxn5 has no audio device).
 
+## file.ux
+
+Varvara FileA helpers (verified against the emulator source:
+native operations run inline inside the DEO — `fread`/`fwrite`/
+`stat`/`unlink` with the count in `success`; web completes later
+through the File vector). One split-phase API covers both:
+`file_read_req` / `file_write_req` / `file_stat_req` /
+`file_delete_req` macros initiate (setting `file_pending`),
+`FileA.success` answers at once on native, and `file_poll()` /
+`file_on_event()` (for the game's `FileA.vector` handler) record
+completion portably into `file_done`/`file_result`. Stat reports
+into RAM: `len` lowercase hex digits of size (`000a`), `-` for
+dirs, `!` for missing, `?` for oversize; reading a directory
+yields `HHHH<TAB>name[/]<NL>` lines. Never request zero bytes (a
+zero `success` reads as "not done yet" — stat first). Needs the
+`FileA` device (copy block in `file.ux` header); paths resolve
+against the emulator's working directory.
+
 ## gfx3d.ux
 
 Software 3D wireframe (Varvara has no 3D): model units are pixels

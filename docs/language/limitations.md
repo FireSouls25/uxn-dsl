@@ -57,6 +57,11 @@ not are marked **footgun**.
   pass fields. Struct types must be declared before use. `match` is
   desugared dispatch (no jump tables) over integer literals plus
   trailing `_`.
+- **Whole-array values move 2 bytes** (`h = g` for `[4] u8` arrays
+  emits one `LDZ2`/`STZ2` pair, copying `g[0..1]` and leaving the
+  rest). Loud and deterministic, but wrong — copy element by element
+  or loop until this is fixed (the struct `=` byte-copy lowering is
+  the model for the fix).
 - **Constants only carry values** for integer and identifier forms;
   anything else degrades to `|0000`.
 
@@ -100,8 +105,9 @@ not are marked **footgun**.
   yields literal `x`).
 - The `Console` device is predeclared; redeclaring it collides.
 - Devices beyond console/screen/controller/mouse/datetime/file
-  (other than audio — see `lib/audio.ux`, `lib/song.ux`) have no
-  helpers — declare ports by hand and use raw device ops.
+  (other than audio — see `lib/audio.ux`, `lib/song.ux` — and FileA
+  — see `lib/file.ux`) have no helpers — declare ports by hand and
+  use raw device ops.
 
 If a limitation blocks something real, the intended fix is almost
 always a small, typed construct — not a bigger escape hatch. That's

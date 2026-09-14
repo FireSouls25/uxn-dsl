@@ -1,0 +1,54 @@
+( file harness: write -> stat -> read -> poll/event -> delete
+  round-trip of `etalfilet.bin` in the emulator's working directory
+  (the gate runs this ROM with CWD in a temp dir and asserts no
+  file is left behind). Numbers below are native-inline `success`
+  counts; the split-phase half proves poll/event on top of them.
+  Expected console bytes: 0a 04 30303061 0a 30313233343536373839
+  01 0a 01 01 21 )
+device FileA 160 {
+    vector: 2
+    success: 2
+    stat: 2
+    delete: 1
+    append: 1
+    name: 2
+    length: 2
+    read: 2
+    write: 2
+}
+import "file.ux"
+
+data fname = [101, 116, 97, 108, 102, 105, 108, 101, 116, 46, 98, 105, 110, 0];
+data payload = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57];
+
+buffer readback[16]: u8;
+buffer statbuf[8]: u8;
+
+main :: fn() {
+    file_write_req(&fname, &payload, 10, 0);
+    w: u16 = FileA.success;
+    varvara.console.write(w);
+    file_stat_req(&fname, &statbuf, 4);
+    varvara.console.write(FileA.success);
+    varvara.console.write(statbuf[0]);
+    varvara.console.write(statbuf[1]);
+    varvara.console.write(statbuf[2]);
+    varvara.console.write(statbuf[3]);
+    file_read_req(&fname, &readback, 10);
+    varvara.console.write(FileA.success);
+    for i in 0..10 {
+        varvara.console.write(readback[i]);
+    }
+    file_read_req(&fname, &readback, 10);
+    file_poll();
+    file_poll();
+    varvara.console.write(file_done);
+    varvara.console.write(file_result);
+    file_read_req(&fname, &readback, 10);
+    file_on_event();
+    varvara.console.write(file_done);
+    file_delete_req(&fname);
+    varvara.console.write(FileA.success);
+    file_stat_req(&fname, &statbuf, 4);
+    varvara.console.write(statbuf[0]);
+}
