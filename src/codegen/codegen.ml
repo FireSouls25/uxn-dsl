@@ -933,7 +933,7 @@ let codegen_func env (fn_def : Ast.func) =
 (* Read a sprite asset file (.chr = 16 bytes/tile 2bpp planar,
    .icn = 8 bytes/tile 1bpp) into a byte list. The loader resolves
    the path against the declaring file, so it is absolute here. *)
-let read_asset_bytes name path =
+let rec read_asset_bytes name path =
   let ic =
     try open_in_bin path
     with Sys_error _ ->
@@ -948,17 +948,74 @@ let read_asset_bytes name path =
       String.lowercase_ascii (String.sub path (dot + 1) (String.length path - dot - 1))
     with Not_found -> ""
   in
-  let tile =
-    match ext with
-    | "chr" -> 16
-    | "icn" -> 8
-    | _ -> failwith (Printf.sprintf
-      "asset `%s`: unknown type `%s` (want .chr for 2bpp or .icn for 1bpp)" name path)
+  if ext = "wav" then read_wav_bytes name path s
+  else begin
+    let tile =
+      match ext with
+      | "chr" -> 16
+      | "icn" -> 8
+      | _ -> failwith (Printf.sprintf
+        "asset `%s`: unknown type `%s` (want .chr for 2bpp, .icn for 1bpp, or .wav for 8-bit mono audio)" name path)
+    in
+    if n mod tile <> 0 then
+      failwith (Printf.sprintf
+        "asset `%s`: %d bytes is not a multiple of %d (one %s tile)" name n tile ext);
+    List.init n (fun i -> Char.code s.[i])
+  end
+
+(* Read a WAV file into raw sample bytes. Only canonical 8-bit mono
+   PCM at 44100Hz is accepted — that is exactly what Uxn plays
+   natively (unsigned bytes, 128-center), so no conversion exists to
+   get wrong. Anything else is a clear error, not a silent
+   resample. Unknown chunks are skipped per the RIFF rules. *)
+and read_wav_bytes name path s =
+  let n = String.length s in
+  let fail msg = failwith (Printf.sprintf "asset `%s`: %s (`%s`)" name msg path) in
+  let need off len what =
+    if off < 0 || len < 0 || off + len > n then fail ("truncated " ^ what)
   in
-  if n mod tile <> 0 then
-    failwith (Printf.sprintf
-      "asset `%s`: %d bytes is not a multiple of %d (one %s tile)" name n tile ext);
-  List.init n (fun i -> Char.code s.[i])
+  let u16le off = Char.code s.[off] + Char.code s.[off + 1] * 256 in
+  let u32le off =
+    Char.code s.[off] + Char.code s.[off + 1] * 256
+    + Char.code s.[off + 2] * 65536 + Char.code s.[off + 3] * 16777216
+  in
+  let tag off = String.sub s off 4 in
+  need 0 12 "header";
+  if tag 0 <> "RIFF" || tag 8 <> "WAVE" then fail "not a RIFF/WAVE file";
+  let fmt = ref None in
+  let data = ref None in
+  let pos = ref 12 in
+  while !pos + 8 <= n do
+    let id = tag !pos in
+    let size = u32le (!pos + 4) in
+    let body = !pos + 8 in
+    if body > n then fail "chunk overruns file";
+    (match id with
+    | "fmt " ->
+      need body 16 "fmt chunk";
+      (match !fmt with Some _ -> () | None -> fmt := Some body)
+    | "data" ->
+      (match !data with Some _ -> () | None -> data := Some (body, size))
+    | _ -> ());
+    pos := body + size + (size mod 2)
+  done;
+  let fbody =
+    match !fmt with
+    | Some b -> b
+    | None -> fail "no fmt chunk"
+  in
+  if u16le fbody <> 1 then fail "only PCM (format 1) supported";
+  if u16le (fbody + 2) <> 1 then fail "only mono supported";
+  if u32le (fbody + 4) <> 44100 then
+    fail "only 44100Hz supported (uxn plays at 44100)";
+  if u16le (fbody + 14) <> 8 then
+    fail "only 8-bit samples supported (uxn plays u8 natively)";
+  match !data with
+  | None -> fail "no data chunk"
+  | Some (dboff, dsize) ->
+    need dboff dsize "data";
+    if dsize = 0 then fail "empty data chunk";
+    List.init dsize (fun i -> Char.code s.[dboff + i])
 
 let encode_string s =
   let buf = Buffer.create 64 in

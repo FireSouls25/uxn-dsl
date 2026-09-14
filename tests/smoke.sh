@@ -20,6 +20,9 @@ fail() { echo "FAIL: $1" >&2; exit 1; }
 SMOKEDIR=$(mktemp -d)
 trap 'rm -rf "$SMOKEDIR"' EXIT INT TERM
 cp "$ROOT/tests/ci.ux" "$ROOT/tests/ci_lib.ux" "$SMOKEDIR/"
+# file() assets resolve against the declaring file, so the fixture's
+# .wav travels with it (same reason a moved project keeps building).
+cp "$ROOT/tests/blip.wav" "$SMOKEDIR/"
 
 # 1+2. Assemble twice from outside the repo; outputs must be
 # non-empty and byte-identical.

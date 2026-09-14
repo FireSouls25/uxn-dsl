@@ -102,6 +102,21 @@ so `cos256(a)` is `sin256(a+64)` — free via `u8` wraparound. No
 bulk literals, no new syntax: the table generates itself from
 `fix16.ux`. `sin256`/`cos256`, `taylor_sin` (exposed for testing).
 
+## audio.ux, song.ux
+
+Uxn pitch bytes are MIDI note numbers (verified against the
+emulator source: 69 renders 441Hz; 0–107 audible, 108+ silent;
+high bit = play once, clear = loop); samples are unsigned 8-bit
+mono at 44100Hz. `audio.ux` holds `NOTE_C1`–`NOTE_B7` plus `REST`,
+a stock 32-byte square wave (`sq32`), and a fire-and-forget `sfx`
+(one-shot voice). `song.ux` is a tick sequencer over a `Note`
+table (`song_next` advances and returns the fired pitch or REST
+— no ports touched, headless-testable; `song_fire` writes Audio0;
+`sfx`-style setup globals shared). Long samples play ~1:1 at
+middle C. Rests sustain through the envelope tail (no hard stops
+v1). Needs the `Audio0` device (copy block in `audio.ux` header);
+web builds are silent (uxn5 has no audio device).
+
 ## gfx3d.ux
 
 Software 3D wireframe (Varvara has no 3D): model units are pixels

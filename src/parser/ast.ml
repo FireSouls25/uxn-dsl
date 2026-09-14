@@ -119,8 +119,9 @@ type data_decl = {
 }
 
 (* An asset embeds a raw sprite file (.chr = 16 bytes/tile 2bpp,
-   .icn = 8 bytes/tile 1bpp) as a hex blob at codegen time.
-   Declared as `data name = file("path");` with the path resolved
+   .icn = 8 bytes/tile 1bpp) or an audio file (.wav = 8-bit mono
+   PCM at 44100Hz, exactly what Uxn plays) as a hex blob at codegen
+   time. Declared as `data name = file("path");` with the path resolved
    relative to the file containing the declaration. *)
 type asset_decl = {
   asset_name: string;

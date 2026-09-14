@@ -53,6 +53,8 @@ bindings, then function locals/params, then globals, in splice order.
 | `u32_*` | fns (32-bit predicates) | `lib/u32.ux` | [stdlib](stdlib.md#u32ux) |
 | `sin256`, `cos256`, `trig_init` | fns (turns256 trig) | `lib/trig.ux` | [stdlib](stdlib.md#trigux) |
 | `vset`, `frame_begin`, `rot_y/x`, `project`, `plot`, `edge` | fns + macro (3D wireframe) | `lib/gfx3d.ux` | [stdlib](stdlib.md#gfx3dux) |
+| `NOTE_*`, `sfx`, `sq32` | consts + data + fn (audio) | `lib/audio.ux` | [stdlib](stdlib.md#audioux-songux) |
+| `song_next/fire/tick`, `Note` | fns + struct (sequencer) | `lib/song.ux` | [stdlib](stdlib.md#audioux-songux) |
 | `screen_size`, `blit`, `clear`, `theme`, `SPRITE_*`, `PIXEL_*` | macros/consts (screen) | `lib/screen.ux` | [stdlib](stdlib.md#screenux) |
 | `obj_spawn/move/hide/draw`, `draw_all`, `OBJ_*` | fns/macros (objects) | `lib/object.ux` | [stdlib](stdlib.md#objectux-animux) |
 | `anim_play/step` | fns (animation) | `lib/anim.ux` | [stdlib](stdlib.md#objectux-animux) |

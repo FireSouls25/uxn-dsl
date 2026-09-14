@@ -212,10 +212,12 @@ The language covers compute, control flow, memory, sprites and input
 well. The remaining gaps cluster around devices and UI text — fitting,
 since this machine is centered on direct UI work:
 
-- **Audio.** No helpers exist, but nothing blocks it either: declare
-  the Audio ports and write sample addresses, lengths, `ADSR` and
-  `pitch` exactly like screen ports. A `sound` sketch (one-shot blip
-  on eat, using a tiny square-wave blob) is the right first artifact.
+- **Audio.** Landed on `dev`: `data x = file("*.wav")` embeds
+  8-bit mono 44100Hz samples with zero conversion (anything else is
+  a compile error); `lib/audio.ux` has MIDI note consts, a stock
+  square wave and one-shot `sfx`; `lib/song.ux` sequences `Note`
+  tables through Audio0. A `sound` sketch (one-shot blip on eat,
+  using a tiny square-wave blob) is the right first artifact.
 - **Text.** There is no font story: no glyph tables, no
   `draw_char`/`draw_string`. Orca-style games need these for scores
   and menus. Recommended as a *library* (`font.ux`: an 8×8 font blob

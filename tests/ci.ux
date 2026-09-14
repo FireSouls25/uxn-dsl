@@ -14,6 +14,10 @@ Pt :: struct { x: u8; y: u8; };
 
 buffer pts[2]: Pt;
 
+data blip = file("blip.wav");
+
+baddr: u16 = &blip;
+
 main :: fn() {
     m: u16 = mod16(17, 5);
     d: u16 = double(ten);

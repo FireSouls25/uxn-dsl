@@ -115,6 +115,7 @@ JMP2r
 .late__x LDZ2 #0001 ADD2 JMP2r
 JMP2r
 
+@blip [ 00 00 00 00 00 00 00 00 ff ff ff ff ff ff ff ff ]
 @etal_meta [ 00 63 69 0a 65 74 61 6c 00 $2 ]
 
 |2000 @cells $16

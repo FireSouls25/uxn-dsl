@@ -1,0 +1,61 @@
+( lib/song.ux — tick sequencer over a Note table, firing Audio0.
+  Fill `song` + setup globals in game setup, then call song_tick()
+  per frame (lengths are in ticks). Needs the Audio0 device (see
+  audio.ux for the copy-paste block); import audio.ux for notes. )
+
+import "audio.ux"
+
+Note :: struct { pitch: u8; len: u8; };
+
+buffer song[24]: Note;
+
+song_len: u8 = 0;
+song_pos: u8 = 0;
+song_wait: u8 = 0;
+song_sample: u16 = 0;
+song_slen: u16 = 0;
+song_vol: u8 = 0;
+song_adsr: u16 = 0;
+
+( Advance one tick; returns the fired pitch, or REST (127) on
+  waiting ticks (and when song_len is 0). Touches no ports —
+  headless-testable; the demo proves the audible half. )
+song_next :: fn() -> u8 {
+    if song_len == 0 {
+        return 127;
+    }
+    if song_wait != 0 {
+        song_wait = song_wait - 1;
+        return 127;
+    }
+    p: u8 = song[song_pos].pitch;
+    l: u8 = song[song_pos].len;
+    if l == 0 {
+        l = 1;
+    }
+    song_wait = l - 1;
+    song_pos = song_pos + 1;
+    if song_pos >= song_len {
+        song_pos = 0;
+    }
+    return p;
+}
+
+song_fire :: fn(pitch: u8) {
+    Audio0.addr = song_sample;
+    Audio0.length = song_slen;
+    Audio0.volume = song_vol;
+    Audio0.adsr = song_adsr;
+    Audio0.pitch = pitch;
+}
+
+song_tick :: fn() {
+    ( Only attacks touch the ports: sustain ticks let the voice ring
+      through its envelope tail, so quarters sound longer than 8ths.
+      A tabled REST (127) likewise sustains — rests are gaps between
+      envelopes, not hard stops. )
+    p: u8 = song_next();
+    if p != REST {
+        song_fire(p);
+    }
+}

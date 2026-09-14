@@ -106,14 +106,19 @@ budgets all 256 bytes and fails past the limit instead of overlapping.
 ```ux
 data head = [ 252 238 239 ];          ( inline bytes -> @head [ fc ee ef ] )
 data head_tile = file("assets/head.chr");  ( sprite file -> same thing )
+data blip = file("blip.wav");             ( 8-bit mono 44100Hz -> samples )
 ```
 
 Inline bytes (decimal or hex, keep them 0–255) and sprite files both
 become ROM blobs. `file()` accepts `.chr` (16 bytes/tile, 2bpp planar:
 first 8 bytes channel one, next 8 channel two) and `.icn` (8
 bytes/tile, 1bpp); sizes are validated as whole tiles at compile time
-and paths resolve relative to the declaring file. Use `&name` to take
-a blob's address (e.g. `Screen.addr = &head_tile;`). Blobs are not
+and paths resolve relative to the declaring file. `.wav` accepts
+canonical 8-bit mono PCM at 44100Hz — exactly what Uxn plays
+natively, so samples embed with zero conversion; anything else
+(stereo, 16-bit, other rates, non-PCM) is a compile error, never a
+silent resample. Use `&name` to take a blob's address (e.g.
+`Screen.addr = &head_tile;`, `Audio0.addr = &blip;`). Blobs are not
 indexable — see [limitations](limitations.md).
 
 ## Buffers and arrays
