@@ -168,3 +168,20 @@ type decl =
   | RawDecl of string  (* Raw Uxntal declaration *)
 
 type program = decl list
+
+(* Top-level name of a declaration, for duplicate detection (loader)
+   and declaration positions (proposal 12). *)
+let decl_name = function
+  | FuncDecl f -> Some ("function", f.name)
+  | MacroDecl m -> Some ("macro", m.macro_name)
+  | GlobalVarDecl (n, _, _) -> Some ("global", n)
+  | GlobalInferDecl (n, _) -> Some ("global", n)
+  | GlobalConstDecl (n, _, _) -> Some ("constant", n)
+  | MetaDecl _ -> Some ("meta block", "meta")
+  | StructDecl s -> Some ("struct", s.struct_name)
+  | DeviceDecl d -> Some ("device", d.device_name)
+  | GroupDecl g -> Some ("group", g.group_name)
+  | DataDecl d -> Some ("data", d.data_name)
+  | AssetDecl a -> Some ("asset", a.asset_name)
+  | BufferDecl b -> Some ("buffer", b.buf_name)
+  | ImportDecl _ | RawDecl _ -> None

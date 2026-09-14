@@ -2,6 +2,28 @@
 
 open Ast
 
+(* Proposal 12: error context. The checker sees no token stream, so
+   errors point at the declaration under check (file:line:col of its
+   start) via the loader's name table; exact use-site lines need
+   AST-wide positions (future work). The shadowed failwith keeps all
+   call sites unchanged — every message is already a string. *)
+let loc_table : (string * Token.pos) list ref = ref []
+let check_ctx : string option ref = ref None
+let set_locs t = loc_table := t
+let set_ctx n = check_ctx := Some n
+
+let failwith (msg : string) =
+  let prefix =
+    match !check_ctx with
+    | Some n ->
+      (match List.assoc_opt n !loc_table with
+       | Some p ->
+         let s = Token.string_of_pos p in
+         if s = "" then "" else s ^ ": "
+       | None -> "")
+    | None -> "" in
+  Stdlib.failwith (prefix ^ msg)
+
 type type_env = {
   mutable vars: (string * typ) list;
   mutable funcs: (string * (param list * typ option)) list;
@@ -531,6 +553,7 @@ let rec type_check_stmt env stmt =
     add_const env name
 
 let type_check_func env (func: func) =
+  set_ctx func.name;
   let func_env = create_env (Some env) in
   List.iter (fun (p: param) ->
     validate_type env (Printf.sprintf "parameter `%s` of `%s`" p.name func.name) p.typ;
@@ -566,6 +589,7 @@ let type_check_program program =
     | MacroDecl _ -> ()
     | ImportDecl _ -> ()
     | GlobalVarDecl (name, typ, init) ->
+      set_ctx name;
       validate_type global_env (Printf.sprintf "global `%s`" name) typ;
       (match init with
       | Some expr ->
@@ -579,6 +603,7 @@ let type_check_program program =
     | GlobalInferDecl _ ->
       failwith "internal error: unelaborated global `:=` reached the type checker"
     | GlobalConstDecl (name, typopt, expr) ->
+      set_ctx name;
       let expr_typ = type_of_expr global_env expr in
       if contains_struct expr_typ then
         failwith (Printf.sprintf "constant `%s` cannot hold a whole struct" name);
@@ -603,10 +628,12 @@ let type_check_program program =
       add_var global_env name t;
       add_const global_env name
     | DeviceDecl device ->
+      set_ctx device.device_name;
       let ports = List.map (fun p -> (p.port_name, typ_of_size p.port_size)) device.ports in
       let full_ports = ("vector", TypU16) :: ports in
       add_device global_env device.device_name full_ports
     | GroupDecl g ->
+      set_ctx g.group_name;
       let reject_mod w t =
         match t with
         | TypMod _ ->
@@ -632,6 +659,7 @@ let type_check_program program =
     | DataDecl _ -> ()
     | AssetDecl _ -> ()
     | MetaDecl (title, author) ->
+      set_ctx "meta";
       let check field v =
         if v = "" then
           failwith (Printf.sprintf "meta `%s` must not be empty" field);
@@ -641,6 +669,7 @@ let type_check_program program =
       check "title" title;
       check "author" author
     | BufferDecl b ->
+      set_ctx b.buf_name;
       (match b.buf_elem with
       | TypU8 | TypU16 | TypBool -> ()
       | TypMod _ ->
@@ -652,6 +681,7 @@ let type_check_program program =
       | _ -> failwith (Printf.sprintf "buffer `%s` must hold u8/u16/bool" b.buf_name));
       add_var global_env b.buf_name (TypArray (b.buf_elem, b.buf_len))
     | StructDecl s ->
+      set_ctx s.struct_name;
       (* v2 fields: scalars, previously-declared structs (nesting),
          and fixed arrays of scalars or structs. Checking is
          single-pass, so only earlier structs resolve — a forward

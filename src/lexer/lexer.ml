@@ -16,6 +16,17 @@ let create source = {
   col = 1;
 }
 
+(* Filename for error positions, set by tokenize_locd (proposal 12).
+   Plain tokenize leaves it empty, so legacy messages are unchanged. *)
+let cur_file = ref ""
+
+(* Located errors (proposal 12): line/col always known, file when
+   tokenize_locd set it. *)
+let lerr lexer fmt =
+  Printf.ksprintf (fun msg ->
+    failwith (at_pos { pfile = !cur_file; pline = lexer.line; pcol = lexer.col } msg)
+  ) fmt
+
 let peek lexer =
   if lexer.pos < String.length lexer.source then
     Some lexer.source.[lexer.pos]
@@ -243,19 +254,19 @@ let read_raw_block lexer =
   skip_whitespace lexer;
   (match peek lexer with
   | Some '{' -> ignore (advance lexer)
-  | _ -> failwith "Expected { after raw");
+  | _ -> lerr lexer "Expected { after raw");
   let start = lexer.pos in
   let depth = ref 1 in
   let rec skip_string () =
     match peek lexer with
-    | None -> failwith "Unterminated raw block (missing })"
+    | None -> lerr lexer "Unterminated raw block (missing })"
     | Some '\\' -> ignore (advance lexer); ignore (advance lexer); skip_string ()
     | Some '"' -> ignore (advance lexer)
     | Some _ -> ignore (advance lexer); skip_string ()
   in
   let rec skip_paren_comment cdepth =
     match peek lexer with
-    | None -> failwith "Unterminated raw block (missing })"
+    | None -> lerr lexer "Unterminated raw block (missing })"
     | Some '(' -> ignore (advance lexer); skip_paren_comment (cdepth + 1)
     | Some ')' ->
       ignore (advance lexer);
@@ -265,7 +276,7 @@ let read_raw_block lexer =
   in
   let rec loop () =
     match peek lexer with
-    | None -> failwith "Unterminated raw block (missing })"
+    | None -> lerr lexer "Unterminated raw block (missing })"
     | Some '{' -> ignore (advance lexer); incr depth; loop ()
     | Some '}' ->
       ignore (advance lexer);
@@ -278,8 +289,7 @@ let read_raw_block lexer =
   loop ();
   String.sub lexer.source start (lexer.pos - 1 - start)
 
-let next_token lexer =
-  skip_whitespace_and_comments lexer;
+let next_token_raw lexer =
   match peek lexer with
   | None -> EOF
   | Some c ->
@@ -364,9 +374,18 @@ let next_token lexer =
         | _ -> RAW)
       else
         keyword_or_ident word
-    | _ -> failwith (Printf.sprintf "Unexpected character '%c' at line %d, col %d" c lexer.line lexer.col)
+    | _ -> lerr lexer "Unexpected character '%c'" c
+
+(* Next token plus its start position (captured after skipping). *)
+let next_token_locd lexer =
+  skip_whitespace_and_comments lexer;
+  let loc = { pfile = !cur_file; pline = lexer.line; pcol = lexer.col } in
+  (next_token_raw lexer, loc)
+
+let next_token lexer = fst (next_token_locd lexer)
 
 let tokenize source =
+  cur_file := "";
   let lexer = create source in
   let tokens = ref [] in
   let rec loop () =
@@ -376,3 +395,21 @@ let tokenize source =
   in
   loop ();
   List.rev !tokens
+
+(* Tokenize with positions (proposal 12): parallel token/pos lists
+   plus the file's declaration positions are built by the parser;
+   see Parser.parse_locd. The pos array aligns 1:1 with tokens. *)
+let tokenize_locd ~file source =
+  cur_file := file;
+  let lexer = create source in
+  let tokens = ref [] in
+  let locs = ref [] in
+  let rec loop () =
+    let token, loc = next_token_locd lexer in
+    tokens := token :: !tokens;
+    locs := loc :: !locs;
+    if token <> EOF then loop ()
+  in
+  loop ();
+  cur_file := "";
+  (List.rev !tokens, Array.of_list (List.rev !locs))

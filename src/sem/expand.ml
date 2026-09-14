@@ -18,6 +18,20 @@
 
 open Ast
 
+(* Proposal 12 context, shared with the checker: macro errors point
+   at the macro (or calling function) under expansion. *)
+let failwith (msg : string) =
+  let prefix =
+    match !Types.check_ctx with
+    | Some n ->
+      (match List.assoc_opt n !Types.loc_table with
+       | Some p ->
+         let s = Token.string_of_pos p in
+         if s = "" then "" else s ^ ": "
+       | None -> "")
+    | None -> "" in
+  Stdlib.failwith (prefix ^ msg)
+
 type macro = {
   m_params : param list;
   m_return : typ option;
@@ -110,6 +124,7 @@ let check_arity m (mac : macro) args =
 
 (* Substitute params, freshen bound names, then expand nested calls. *)
 let rec expand_body macros guard m (mac : macro) args =
+  Types.set_ctx m;
   incr counter;
   let id = !counter in
   let pnames = List.map (fun (p : param) -> p.name) mac.m_params in
@@ -210,6 +225,7 @@ let expand_program program =
   let macros = ref [] in
   List.iter (function
     | MacroDecl m ->
+      Types.set_ctx m.macro_name;
       if List.mem_assoc m.macro_name !macros then
         failwith (Printf.sprintf "duplicate macro `%s`" m.macro_name);
       macros := (m.macro_name,
@@ -219,7 +235,7 @@ let expand_program program =
   let macros = !macros in
   List.concat_map (function
     | MacroDecl _ -> []
-    | FuncDecl f -> [FuncDecl { f with body = expand_stmts macros [] f.body }]
+    | FuncDecl f -> Types.set_ctx f.name; [FuncDecl { f with body = expand_stmts macros [] f.body }]
     | GlobalVarDecl (n, t, i) -> [GlobalVarDecl (n, t, opt_expand macros [] i)]
     | GlobalInferDecl (n, e) -> [GlobalInferDecl (n, expand_expr macros [] e)]
     | GlobalConstDecl (n, t, e) -> [GlobalConstDecl (n, t, expand_expr macros [] e)]

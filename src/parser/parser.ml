@@ -6,22 +6,53 @@ open Ast
 type parser_state = {
   tokens: token list;
   mutable pos: int;
+  (* Proposal 12: parallel positions (empty = legacy path, e.g. unit
+     probes). peek/advance record the last touched token; the
+     shadowed failwith below prefixes every error with it — no
+     per-site edits. dlocs maps top-level names to decl starts. *)
+  locs: pos array;
+  file: string;
+  mutable dlocs: (string * pos) list;
 }
 
-let create_parser tokens = {
-  tokens;
-  pos = 0;
-}
+let last_loc = ref nopos
+
+let failwith msg = Stdlib.failwith (at_pos !last_loc msg)
+
+let create_parser ?(file="") ?(locs=[||]) tokens =
+  last_loc := { pfile = file; pline = 1; pcol = 1 };
+  {
+    tokens;
+    pos = 0;
+    locs;
+    file;
+    dlocs = [];
+  }
+
+let loc_at parser i =
+  if i >= 0 && i < Array.length parser.locs then Some parser.locs.(i)
+  else None
 
 let peek parser =
+  (match loc_at parser parser.pos with
+   | Some l -> last_loc := l
+   | None -> ());
   if parser.pos < List.length parser.tokens then
     List.nth parser.tokens parser.pos
   else
     EOF
 
+let peek_pos parser =
+  match loc_at parser parser.pos with
+  | Some l -> l
+  | None -> { pfile = parser.file; pline = 0; pcol = 0 }
+
 let advance parser =
   if parser.pos < List.length parser.tokens then begin
     let token = List.nth parser.tokens parser.pos in
+    (match loc_at parser parser.pos with
+     | Some l -> last_loc := l
+     | None -> ());
     parser.pos <- parser.pos + 1;
     token
   end else
@@ -848,7 +879,11 @@ let parse_program parser =
     match peek parser with
     | EOF -> List.rev decls
     | _ ->
+      let start = peek_pos parser in
       let decl = parse_decl parser in
+      (match decl_name decl with
+       | Some (_, n) -> parser.dlocs <- (n, start) :: parser.dlocs
+       | None -> ());
       loop (decl :: decls)
   in
   loop []
@@ -856,3 +891,10 @@ let parse_program parser =
 let parse tokens =
   let parser = create_parser tokens in
   parse_program parser
+
+(* Located parse (proposal 12): declarations plus top-level
+   name -> decl-start positions for later passes. *)
+let parse_locd ~file tokens locs =
+  let parser = create_parser ~file ~locs tokens in
+  let decls = parse_program parser in
+  (decls, List.rev parser.dlocs)

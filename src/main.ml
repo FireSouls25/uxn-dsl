@@ -4,6 +4,36 @@ open Printf
 
 let usage = "Usage: etal [options] <input.ux>\n\nOptions:\n  -o <output>    Output file (default depends on mode)\n  -t             Output Uxntal source (.tal)\n  -r             Output assembled ROM (.rom)\n  --target <t>   Bundle target: native (default) or web (single .html)\n  -v             Verbose output\n  -h             Show this help\n\nWith neither -t nor -r, etal outputs a single self-contained\nbundle: the vendored uxn vm plus the assembled ROM (native), or\na playable web page with the vendored uxn5 emulator (--target web).\nExtra native-bundle arguments are passed to the vm\n(e.g. ./game -2 for 2x zoom).\n"
 
+(* Proposal 12: turn a `file:line:col: ...` failure into a backend-
+   friendly diagnostic plus the offending source line. A Windows
+   drive prefix (`C:/...`) holds a colon that is not a separator.
+   Never fails (unlocated messages just print). *)
+let split_loc msg =
+  let s = ref msg in
+  let file = ref "" in
+  if String.length !s >= 2 && (let c = !s.[0] in
+      (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) && !s.[1] = ':' then begin
+    file := String.sub !s 0 2;
+    s := String.sub !s 2 (String.length !s - 2)
+  end;
+  match String.split_on_char ':' !s with
+  | f :: line_s :: _ :: _ ->
+    (try Some (!file ^ f, int_of_string line_s) with _ -> None)
+  | _ -> None
+
+let echo_source_line msg =
+  match split_loc msg with
+  | None -> ()
+  | Some (file, line) ->
+    (try
+       let ic = open_in_bin file in
+       (try
+          for _ = 2 to line do ignore (input_line ic) done;
+          eprintf "   | %s\n" (input_line ic)
+        with _ -> ());
+       close_in_noerr ic
+     with _ -> ())
+
 let () =
   let input_file = ref None in
   let output_file = ref None in
@@ -53,8 +83,12 @@ let () =
 
   if !verbose then eprintf "Compiling %s to %s\n" input_file output_file;
 
-  (* Load with import resolution (recursive, file-relative) *)
-  let program = Loader.load_program input_file in
+  (try
+  (* Load with import resolution (recursive, file-relative).
+     The loader also returns declaration positions (proposal 12)
+     for error context in later passes. *)
+  let program, locs = Loader.load_program input_file in
+  Types.set_locs locs;
   if !verbose then
     eprintf "Loaded %d declarations (imports resolved)\n" (List.length program);
 
@@ -144,3 +178,9 @@ let () =
     | `Tal -> assert false));
 
   printf "Success: %s -> %s\n" input_file output_file
+  with Failure msg ->
+    (* Proposal 12: one clean stderr line (exit 1) instead of an
+       untagged Fatal exception — machine-parseable for editors. *)
+    eprintf "etal: error: %s\n" msg;
+    echo_source_line msg;
+    exit 1)
