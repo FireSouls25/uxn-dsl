@@ -54,3 +54,9 @@ Arrows steer, space pauses/resumes/restarts. The harness variant
 (`test_snake.ux`, a `main :: fn()` that halts) prints
 `53 09 08 00 …` — head positions and score per tick — which the test
 suite diffs byte-for-byte.
+
+## More examples
+
+- [Megalovania audio demo](megalo.md) — `examples/megalo/`: a
+  20-note sequenced loop plus a `.wav` blip, with run and ear-check
+  instructions.

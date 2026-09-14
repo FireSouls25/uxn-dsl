@@ -98,8 +98,8 @@ not are marked **footgun**.
   yields literal `x`).
 - The `Console` device is predeclared; redeclaring it collides.
 - Devices beyond console/screen/controller/mouse/datetime/file
-  (notably audio) have no helpers — declare ports by hand and use
-  raw device ops.
+  (other than audio — see `lib/audio.ux`, `lib/song.ux`) have no
+  helpers — declare ports by hand and use raw device ops.
 
 If a limitation blocks something real, the intended fix is almost
 always a small, typed construct — not a bigger escape hatch. That's
