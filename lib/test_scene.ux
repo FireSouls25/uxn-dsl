@@ -55,7 +55,7 @@ main :: fn() {
     emit16(scene_pop());
     emit16(scene_prev);
     a: u16 = obj_spawn(10, 20, 100, OBJ_VISIBLE | OBJ_LAYER0);
-    b: u16 = obj_spawn(30, 40, 200, OBJ_VISIBLE | OBJ_LAYER2);
+    obj_spawn(30, 40, 200, OBJ_VISIBLE | OBJ_LAYER2);
     obj_draw_mode(a, SPRITE_LAYER);
     draw_all_layered();
 }

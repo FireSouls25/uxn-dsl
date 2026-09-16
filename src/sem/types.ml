@@ -24,6 +24,49 @@ let failwith (msg : string) =
     | None -> "" in
   Stdlib.failwith (prefix ^ msg)
 
+(* Proposal 13: unused-discovery. Name-mentioned = used (mentioning
+   covers reads, writes and references — write-only detection is
+   future work; shadowing conflates, so a used shadower suppresses
+   warnings for same-named dead bindings — sound, occasionally
+   quiet). Tracked only where dead weight costs bytes: globals,
+   stored (`: T :`) constants, locals, parameters, data and assets.
+   Skipped: functions (DCE prunes them by design), free `::`
+   constants (address labels, zero bytes), labels (zero cost —
+   drifblim already warns downstream), macros (expanded away),
+   buffers, devices, groups, structs.
+   defs: name -> (kind, enclosing fn or "" for top level). *)
+let uses : string list ref = ref []
+let defs : (string * (string * string)) list ref = ref []
+let mark_used n = uses := n :: !uses
+(* Top-level sites pass ~func:"" explicitly: check_ctx there holds
+   a stale (or self) name, never the right scope. Stmt-level sites
+   run inside functions, so the ambient context is correct. *)
+let def_name ?func n kind =
+  let f =
+    match func with
+    | Some f -> f
+    | None -> (match !check_ctx with Some c -> c | None -> "") in
+  defs := (n, (kind, f)) :: !defs
+
+(* Raw text may reference any name (same rationale as DCE's raw
+   bail-out), so a program with raw skips warnings entirely. *)
+let report_uses program =
+  if Dce.has_raw program then () else
+  let used = List.sort_uniq String.compare !uses in
+  List.iter (fun (name, (kind, func)) ->
+    if List.mem name used then () else
+    let target = if func = "" then name else func in
+    let at =
+      match List.assoc_opt target !loc_table with
+      | Some p ->
+        let s = Token.string_of_pos p in
+        if s = "" then "" else " (" ^ s ^ ")"
+      | None -> "" in
+    let where = if func = "" then "" else Printf.sprintf " in fn `%s`" func in
+    Printf.eprintf "warning: unused %s `%s`%s%s\n" kind name where at
+  ) (List.rev !defs)
+
+
 type type_env = {
   mutable vars: (string * typ) list;
   mutable funcs: (string * (param list * typ option)) list;
@@ -245,6 +288,7 @@ let rec type_of_expr env expr =
     else failwith (Printf.sprintf "Integer %d out of range" n)
   | StringLit _ -> TypPointer TypU8
   | Ident name ->
+    mark_used name;
     (match lookup_var env name with
     | Some typ -> typ
     | None -> failwith (Printf.sprintf "Undefined variable %s" name))
@@ -337,7 +381,7 @@ let rec type_of_expr env expr =
     (match expr with
     | Ident base ->
       (match lookup_var env base with
-      | Some (TypStruct sname) -> struct_field_of sname
+      | Some (TypStruct sname) -> mark_used base; struct_field_of sname
       | _ ->
         (match lookup_device_port env base field with
         | Some typ -> typ
@@ -356,6 +400,7 @@ let rec type_of_expr env expr =
       | Ident aname ->
         (match lookup_var env aname with
         | Some (TypArray (TypStruct sname, _)) ->
+          mark_used aname;
           let index_typ = type_of_expr env index in
           (match mod_base index_typ with
           | TypU8 | TypU16 -> ()
@@ -393,7 +438,9 @@ let rec type_of_expr env expr =
       | TypU16 -> TypU16
       | TypVoid -> TypU8
       | _ -> TypU8))
-  | AddrOf _ -> TypU16
+  | AddrOf name ->
+    mark_used name;
+    TypU16
   | RawLit _ -> TypU16
   | Assign (left, right) ->
     (match left with
@@ -430,6 +477,7 @@ let rec type_of_expr env expr =
    anything else fail here, so callers try their own shapes first. *)
 and composite_typ env = function
   | Ident n ->
+    mark_used n;
     (match lookup_var env n with
      | Some t -> t
      | None -> failwith (Printf.sprintf "Undefined variable %s" n))
@@ -522,6 +570,7 @@ let rec type_check_stmt env stmt =
     failwith "internal error: unexpanded match reached the type checker"
   | VarDecl (name, typ, init) ->
     validate_type env (Printf.sprintf "variable `%s`" name) typ;
+    def_name name "local";
     (match init with
     | Some expr ->
       let init_typ = type_of_expr env expr in
@@ -534,6 +583,9 @@ let rec type_check_stmt env stmt =
   | InferDecl _ ->
     failwith "internal error: unelaborated `:=` reached the type checker"
   | ConstDecl (name, typopt, expr) ->
+    (* Only the stored `: T :` form costs a slot; `::` values are
+       free address labels. *)
+    (match typopt with Some _ -> def_name name "constant" | None -> ());
     let expr_typ = type_of_expr env expr in
     if contains_struct expr_typ then
       failwith (Printf.sprintf "constant `%s` cannot hold a whole struct" name);
@@ -563,6 +615,7 @@ let type_check_func env (func: func) =
   let func_env = create_env (Some env) in
   List.iter (fun (p: param) ->
     validate_type env (Printf.sprintf "parameter `%s` of `%s`" p.name func.name) p.typ;
+    def_name p.name "parameter";
     if contains_struct p.typ then
       failwith (Printf.sprintf "struct parameter `%s` of `%s` is not supported (pass fields)" p.name func.name);
     add_var func_env p.name p.typ
@@ -596,6 +649,7 @@ let type_check_program program =
     | ImportDecl _ -> ()
     | GlobalVarDecl (name, typ, init) ->
       set_ctx name;
+      def_name ~func:"" name "global";
       validate_type global_env (Printf.sprintf "global `%s`" name) typ;
       (match init with
       | Some expr ->
@@ -610,6 +664,9 @@ let type_check_program program =
       failwith "internal error: unelaborated global `:=` reached the type checker"
     | GlobalConstDecl (name, typopt, expr) ->
       set_ctx name;
+      (match typopt with
+       | Some _ -> def_name ~func:"" name "constant"
+       | None -> ());
       let expr_typ = type_of_expr global_env expr in
       if contains_struct expr_typ then
         failwith (Printf.sprintf "constant `%s` cannot hold a whole struct" name);
@@ -662,8 +719,8 @@ let type_check_program program =
       add_var global_env g.group_name base_size;
       let fields = List.map (fun (fname, ftyp) -> (fname, ftyp)) g.fields in
       add_group global_env g.group_name fields
-    | DataDecl _ -> ()
-    | AssetDecl _ -> ()
+    | DataDecl d -> def_name ~func:"" d.data_name "data"
+    | AssetDecl a -> def_name ~func:"" a.asset_name "asset"
     | MetaDecl (title, author) ->
       set_ctx "meta";
       let check field v =
@@ -719,4 +776,5 @@ let type_check_program program =
       add_struct global_env s.struct_name s.struct_fields
     | RawDecl _ -> ()
   ) program;
+  report_uses program;
   global_env

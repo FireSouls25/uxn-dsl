@@ -81,6 +81,8 @@ layered drawing (`draw_all_layered`, `obj_draw_mode`). Diagnostics:
 `file:line:col` errors with source echo and clean `etal: error:`
 exit-1 (declaration granularity in the checker); `assert E;`
 halts with a baked location, gated both passing and failing.
+Unused-discovery warnings (globals, stored consts, locals, params,
+data/assets — never functions/macros/labels) with positions.
 Animation:
 `Anim` rows with `LOOP/ONCE/PINGPONG` modes, `anim_stop/start`
 freeze/resume plus `anim_playing` query. Software

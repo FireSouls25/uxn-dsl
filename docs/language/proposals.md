@@ -339,6 +339,14 @@ every vector handler would false-positive) and warn at the end for
 never-used globals, locals, functions, labels and data. drifblim
 already warns on unused *tal* labels; this catches dead ETAL a whole
 pass earlier, with names attached.
+(obsolete — implemented on `dev` as name-mentioned-equals-used
+counting at the checker: warns unused globals, stored constants,
+locals, parameters, data and assets with positions, to stderr at
+exit 0. Skips functions (DCE prunes them by design), free `::`
+constants (zero bytes), labels (zero cost, drifblim covers),
+macros, buffers, devices, groups and structs; skips whole programs
+containing raw; shadowing conflates (sound, occasionally quiet).
+Gated by a location-aware `check_warn`.)
 
 ## 14. Hoist pure `for` bounds (P0)
 

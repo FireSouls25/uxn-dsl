@@ -9,12 +9,12 @@
     @main__m $2
     @main__d $2
     @main__total $2
+    @main__K $2
+    @main__CAP $2
     @main__i $2
     @main__for_end_1 $2
     @main__step $1
     @main__w $2
-    @main__K $2
-    @main__CAP $2
     @main__ok $1
     @main__ng $1
     @main____match_2 $2
@@ -53,6 +53,8 @@ JMP2r
 #0041 ;cells #0000 #0002 MUL2 ADD2 STA2
 #0042 ;cells #0001 #0002 MUL2 ADD2 STA2
 .main__m LDZ2 .main__d LDZ2 ADD2 .main__total STZ2
+#0004 .main__K STZ2
+#000a .main__CAP STZ2
 #0000 .main__i STZ2
 #0002 .main__for_end_1 STZ2
 &for_2
@@ -64,7 +66,7 @@ JMP2r
  !&for_2
 &for_end_4
 &while_5
-.main__total LDZ2 #001e GTH2 ?&while_cont_6
+.main__total LDZ2 .main__CAP LDZ2 GTH2 ?&while_cont_6
  !&while_end_7
 &while_cont_6
 .main__total LDZ2 #0001 SUB2 .main__total STZ2
@@ -75,8 +77,6 @@ JMP2r
 .grid_pos LDZ2 #0014 SUB2 #0010 DIV2k MUL2 SUB2 .grid_pos STZ2
 #0007 #0008 DIV2k MUL2 SUB2 .main__w STZ2
 .main__w LDZ2 #0003 ADD2 #0008 DIV2k MUL2 SUB2 .main__w STZ2
-#0004 .main__K STZ2
-#000a .main__CAP STZ2
 #03 ;pts #0000 #0002 MUL2 ADD2 STA
 #04 ;pts #0001 #0002 MUL2 ADD2 #0001 ADD2 STA
 #00 .main__ok STZ
@@ -114,6 +114,7 @@ JMP2r
 #0030 #0001 ;late JSR2 ADD2 NIP .Console/write DEO
 #0030 .main__ok LDZ #00 SWP ADD2 NIP .Console/write DEO
 #0030 .main__ng LDZ #00 SWP SUB #00 SWP ADD2 NIP .Console/write DEO
+#0030 .baddr LDZ2 ADD2 ;blip SUB2 NIP .Console/write DEO
 #01 ;pair0 STA
 #02 ;pair0 #0001 ADD2 STA
 #03 .pair0 #02 ADD STZ
