@@ -69,12 +69,12 @@ let rename_var rename n =
   try List.assoc n rename with Not_found -> n
 
 let rec subst_expr psubst rename = function
-  | Ident n as e ->
+  | Ident (n, p) as e ->
     (try List.assoc n psubst
      with Not_found ->
-       (try Ident (List.assoc n rename) with Not_found -> e))
-  | AddrOf n as e ->
-    (try AddrOf (List.assoc n rename) with Not_found -> e)
+       (try Ident (List.assoc n rename, p) with Not_found -> e))
+  | AddrOf (n, p) as e ->
+    (try AddrOf (List.assoc n rename, p) with Not_found -> e)
   | BinOp (op, l, r) -> BinOp (op, subst_expr psubst rename l, subst_expr psubst rename r)
   | UnOp (op, e) -> UnOp (op, subst_expr psubst rename e)
   | Call (f, args) ->
@@ -135,7 +135,7 @@ let rec expand_body macros guard m (mac : macro) args =
   expand_stmts macros (m :: guard) body
 
 and expand_expr macros guard = function
-  | Call (Ident m, args) as e ->
+  | Call (Ident (m, _), args) as e ->
     (match lookup_macro macros m with
     | None ->
       (match e with
@@ -161,7 +161,7 @@ and expand_expr macros guard = function
   | (Ident _ | IntLit _ | StringLit _ | AddrOf _ | RawLit _) as e -> e
 
 and expand_stmt macros guard = function
-  | ExprStmt (Call (Ident m, args)) when lookup_macro macros m <> None ->
+  | ExprStmt (Call (Ident (m, _), args)) when lookup_macro macros m <> None ->
     let mac = match lookup_macro macros m with Some x -> x | None -> assert false in
     if List.mem m guard then
       failwith (Printf.sprintf "recursive macro call to `%s`" m);
@@ -198,7 +198,7 @@ and expand_stmt macros guard = function
     | (MInt n, first) :: rest ->
       incr counter;
       let tmp = "__match_" ^ string_of_int !counter in
-      let cond m = BinOp (Eq, Ident tmp, IntLit m) in
+      let cond m = BinOp (Eq, Ident (tmp, Token.nopos), IntLit (m, Token.nopos)) in
       let rec split = function
         | [] -> ([], [])
         | (MInt m, b) :: tl ->

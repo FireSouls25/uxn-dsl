@@ -152,7 +152,7 @@ let rec typ_involves_struct = function
    else (devices, groups, scalars) is false, so legacy emitters stay
    untouched wherever this is false. *)
 let rec composite_involves_struct env = function
-  | Ast.Ident n ->
+  | Ast.Ident (n, _) ->
     (try
        let info =
          try List.assoc n env.local_vars
@@ -169,7 +169,7 @@ let rec composite_involves_struct env = function
    arrays and their nested/array fields to its type. Anything else
    fails — callers only route struct-involved shapes here. *)
 let rec composite_node_typ env = function
-  | Ast.Ident n ->
+  | Ast.Ident (n, _) ->
     (try
        (try List.assoc n env.local_vars
         with Not_found -> List.assoc n env.global_vars).typ
@@ -286,7 +286,7 @@ let add_local_var env name typ =
 
 let rec field_path expr =
   match expr with
-  | Ident name -> name
+  | Ident (name, _) -> name
   | Field (outer, field) -> (field_path outer) ^ "." ^ field
   | _ -> "unknown"
 
@@ -296,13 +296,13 @@ let rec field_path expr =
 let rec expr_is_u8 env expr =
   (* True iff codegen_expr leaves exactly 1 byte on the stack. *)
   match expr with
-  | IntLit n when n >= 0 && n <= 255 -> true
-  | Ident n ->
+  | IntLit (n, _) when n >= 0 && n <= 255 -> true
+  | Ident (n, _) ->
     (try (try List.assoc n env.local_vars with Not_found -> List.assoc n env.global_vars).size = 1
      with Not_found -> false)
-  | Field (Ident b, f) when is_device env b ->
+  | Field (Ident (b, _), f) when is_device env b ->
     (match lookup_device_port env b f with Some 1 -> true | _ -> false)
-  | Field (Ident b, f) when is_group env b ->
+  | Field (Ident (b, _), f) when is_group env b ->
     (match lookup_group_field env b f with Some 1 -> true | _ -> false)
   | BinOp (Eq, _, _) | BinOp (Neq, _, _) | BinOp (Lt, _, _)
   | BinOp (Gt, _, _) | BinOp (Le, _, _) | BinOp (Ge, _, _)
@@ -313,9 +313,9 @@ let rec expr_is_u8 env expr =
   (* A call leaves exactly what the callee declares: byte for `-> u8`
      (or bool), short otherwise. Unknown callees keep the legacy
      short assumption. *)
-  | Call (Ident n, _) ->
+  | Call (Ident (n, _), _) ->
     (try List.assoc n env.func_rets = 1 with Not_found -> false)
-  | Index (Ident n, _) ->
+  | Index (Ident (n, _), _) ->
     (try
        let info =
          try List.assoc n env.local_vars
@@ -327,14 +327,14 @@ let rec expr_is_u8 env expr =
        | _ -> false)
      with Not_found -> false)
   (* A byte struct field leaves exactly one byte (LDA/LDZ). *)
-  | Field (Index (Ident arr, _), fname) ->
+  | Field (Index (Ident (arr, _), _), fname) ->
     (match is_struct_array env arr with
     | Some sname ->
       (match try Some (struct_field env sname fname) with Not_found -> None with
       | Some (_, 1) -> true
       | _ -> false)
     | None -> false)
-  | Field (Ident v, fname) ->
+  | Field (Ident (v, _), fname) ->
     (match is_struct_var env v with
     | Some (sname, _) ->
       (match try Some (struct_field env sname fname) with Not_found -> None with
@@ -375,17 +375,17 @@ let emit_mod_reduce env = function
 
 let rec codegen_expr env expr =
   match expr with
-  | IntLit n ->
+  | IntLit (n, _) ->
     if n >= 0 && n <= 255 then
       emit env "#%02x" n
     else if n >= 0 && n <= 65535 then
       emit env "#%04x" n
     else
       failwith (sprintf "Integer %d out of range" n)
-  | StringLit s ->
+  | StringLit (s, _) ->
     let label = make_string_label env s in
     emit env ";%s" label
-  | Ident name ->
+  | Ident (name, _) ->
     if List.mem name env.constants then
       emit env ";%s" name
     else
@@ -413,17 +413,17 @@ let rec codegen_expr env expr =
     let is_eq = match op with Eq | Neq | Lt | Gt | Le | Ge -> true | _ -> false in
     let left_is_u8 =
       match left with
-      | Ident n -> (try (try List.assoc n env.local_vars with Not_found -> List.assoc n env.global_vars).size = 1 with Not_found -> false)
-      | Field (Ident b, f) when is_device env b -> (match lookup_device_port env b f with Some 1 -> true | _ -> false)
-      | Field (Ident b, f) when is_group env b -> (match lookup_group_field env b f with Some 1 -> true | _ -> false)
-      | IntLit n when n <= 255 -> true
+      | Ident (n, _) -> (try (try List.assoc n env.local_vars with Not_found -> List.assoc n env.global_vars).size = 1 with Not_found -> false)
+      | Field (Ident (b, _), f) when is_device env b -> (match lookup_device_port env b f with Some 1 -> true | _ -> false)
+      | Field (Ident (b, _), f) when is_group env b -> (match lookup_group_field env b f with Some 1 -> true | _ -> false)
+      | IntLit (n, _) when n <= 255 -> true
       | _ -> false
     in
     let right_is_u8 =
       match right with
-      | IntLit n when n <= 255 -> true
-      | Ident n -> (try (try List.assoc n env.local_vars with Not_found -> List.assoc n env.global_vars).size = 1 with Not_found -> false)
-      | Field (Ident b, f) when is_device env b -> (match lookup_device_port env b f with Some 1 -> true | _ -> false)
+      | IntLit (n, _) when n <= 255 -> true
+      | Ident (n, _) -> (try (try List.assoc n env.local_vars with Not_found -> List.assoc n env.global_vars).size = 1 with Not_found -> false)
+      | Field (Ident (b, _), f) when is_device env b -> (match lookup_device_port env b f with Some 1 -> true | _ -> false)
       | _ -> false
     in
     let use8 = is_eq && left_is_u8 && right_is_u8 in
@@ -432,7 +432,7 @@ let rec codegen_expr env expr =
       else
         (* 16-bit op: both operands must be shorts *)
         match e with
-        | IntLit n when n >= 0 && n <= 255 -> emit env "#%04x" n
+        | IntLit (n, _) when n >= 0 && n <= 255 -> emit env "#%04x" n
         | _ when expr_is_u8 env e -> codegen_expr env e; emit env " #00 SWP"
         | _ -> codegen_expr env e
     in
@@ -445,7 +445,7 @@ let rec codegen_expr env expr =
         codegen_rhs env left 2;
         emit env " ";
         (match right with
-        | IntLit n ->
+        | IntLit (n, _) ->
           let c = (match op with
             | Lshift -> ((n land 0x0f) lsl 4)
             | _ -> (n land 0x0f)) in
@@ -545,14 +545,14 @@ let rec codegen_expr env expr =
       (* Regular function call: promote args to param sizes when known. *)
       let param_sizes =
         match func_expr with
-        | Ident name -> (try Some (List.assoc name env.func_sigs) with Not_found -> None)
+        | Ident (name, _) -> (try Some (List.assoc name env.func_sigs) with Not_found -> None)
         | _ -> None
       in
       (* Builtin print("...") inlines a string printer and takes over
          arg emission (the literal must not be pushed as a value). *)
       let is_print_lit =
         match func_expr, args with
-        | Ident "print", [StringLit _] -> true
+        | Ident ("print", _), [StringLit _] -> true
         | _ -> false
       in
       if not is_print_lit then
@@ -568,9 +568,9 @@ let rec codegen_expr env expr =
             emit env " "
           ) args);
       (match func_expr with
-      | Ident "print" ->
+      | Ident ("print", _) ->
         (match args with
-        | [StringLit s] ->
+        | [StringLit (s, _)] ->
           (* Inline NUL-terminated string printer:
              ;str &loop LDAk .Console/write DEO INC2 LDAk ?&loop POP2 *)
           let label = make_string_label env s in
@@ -581,7 +581,7 @@ let rec codegen_expr env expr =
           (* Args already emitted above; a non-literal print call
              falls through to a (likely undefined) JSR. *)
           emit env ";print JSR2")
-      | Ident name ->
+      | Ident (name, _) ->
         emit env ";%s JSR2" name
       | _ -> failwith "Invalid function expression")
     end
@@ -596,7 +596,7 @@ let rec codegen_expr env expr =
     if esz = 1 then emit env "LDA" else emit env "LDA2"
   | Field (expr, field) ->
     (match expr with
-    | Index (Ident arr, index) ->
+    | Index (Ident (arr, _), index) ->
       (match is_struct_array env arr with
       | Some sname ->
         (* Buffer/zp row field: absolute base + scaled index + field
@@ -618,7 +618,7 @@ let rec codegen_expr env expr =
       | None ->
         (* Legacy fallthrough below handles devices/groups/plain. *)
         codegen_expr env expr)
-    | Ident v ->
+    | Ident (v, _) ->
       (match is_struct_var env v with
       | Some (sname, info) ->
         (* Zero-page row field: slot address + field offset. *)
@@ -650,7 +650,7 @@ let rec codegen_expr env expr =
       codegen_path_load env (Field (expr, field))
     | _ ->
       codegen_expr env expr)
-  | AddrOf name ->
+  | AddrOf (name, _) ->
     emit env ";%s" name
   | RawLit s ->
     emit env "%s" s
@@ -665,7 +665,7 @@ let rec codegen_expr env expr =
      | _ -> failwith "internal error: whole copy of non-copyable")
   | Assign (left, right) ->
     (match left with
-    | Ident name ->
+    | Ident (name, _) ->
       (try
         let info = List.assoc name env.local_vars in
         codegen_rhs env right info.size;
@@ -682,7 +682,7 @@ let rec codegen_expr env expr =
           emit env " .%s STZ2" name)
     | Field (field_expr, field_name) ->
       (match field_expr with
-      | Index (Ident arr, index) ->
+      | Index (Ident (arr, _), index) ->
         (match is_struct_array env arr with
         | Some sname ->
           let elemsize = resolve_size env (Ast.TypStruct sname) in
@@ -705,7 +705,7 @@ let rec codegen_expr env expr =
         | None ->
           codegen_expr env right;
           emit env " #0000")
-      | Ident v ->
+      | Ident (v, _) ->
         (match is_struct_var env v with
         | Some (sname, info) ->
           let off, fsize =
@@ -779,12 +779,12 @@ let rec codegen_expr env expr =
 and codegen_rhs env expr dest_size =
   if dest_size = 2 then
     match expr with
-    | IntLit n when n >= 0 && n <= 255 -> emit env "#%04x" n
+    | IntLit (n, _) when n >= 0 && n <= 255 -> emit env "#%04x" n
     | _ when expr_is_u8 env expr -> codegen_expr env expr; emit env " #00 SWP"
     | _ -> codegen_expr env expr
   else if dest_size = 1 then
     match expr with
-    | IntLit n when n >= 0 && n <= 255 -> emit env "#%02x" n
+    | IntLit (n, _) when n >= 0 && n <= 255 -> emit env "#%02x" n
     | _ when expr_is_u8 env expr -> codegen_expr env expr
     | _ -> codegen_expr env expr; emit env " NIP"
   else
@@ -795,7 +795,7 @@ and codegen_rhs env expr dest_size =
    pointers evaluate to an address. Pure: emits nothing. *)
 and index_array_info env arr =
   match arr with
-  | Ident n ->
+  | Ident (n, _) ->
     (try
        let info =
          try List.assoc n env.local_vars
@@ -825,7 +825,7 @@ and index_array_info env arr =
 and codegen_index_addr env arr index =
   let elem_size, use_addr_base = index_array_info env arr in
   (match arr with
-   | Ident n when use_addr_base -> emit env ";%s" n
+   | Ident (n, _) when use_addr_base -> emit env ";%s" n
    | _ -> codegen_expr env arr);
   emit env " ";
   codegen_rhs env index 2;
@@ -843,7 +843,7 @@ and codegen_index_addr env arr index =
    page, buffers) is an absolute label, so `;name` works for all. *)
 and codegen_composite_addr env expr =
   match expr with
-  | Ast.Ident n ->
+  | Ast.Ident (n, _) ->
     let info = get_var_info env n in
     emit env ";%s" (if info.is_local then info.addr else info.name)
   | Ast.Index (arr, idx) ->
@@ -1041,7 +1041,7 @@ let rec codegen_stmt env stmt =  match stmt with
         (match typ with
          | Ast.TypArray _ ->
            (* Whole-array init copies (checked same type/length). *)
-           codegen_whole_copy env (Ast.Ident name) expr (resolve_size env typ)
+           codegen_whole_copy env (Ast.Ident (name, Token.nopos)) expr (resolve_size env typ)
          | _ ->
            let size = resolve_size env typ in
            codegen_rhs env expr size;
@@ -1066,7 +1066,7 @@ let rec codegen_stmt env stmt =  match stmt with
       | Some expr ->
         (match typ with
          | Ast.TypArray _ ->
-           codegen_whole_copy env (Ast.Ident name) expr size
+           codegen_whole_copy env (Ast.Ident (name, Token.nopos)) expr size
          | _ ->
            codegen_rhs env expr size;
            emit_mod_reduce env typ;
@@ -1126,18 +1126,18 @@ let rec codegen_stmt env stmt =  match stmt with
     (* Determine size for STH *)
     let size =
       match expr with
-      | Ident name ->
+      | Ident (name, _) ->
         (try (try List.assoc name env.local_vars with Not_found -> List.assoc name env.global_vars).size
          with Not_found -> 2)
-      | IntLit n -> if n <= 255 then 1 else 2
-      | Field (Index (Ident arr, _), fname) ->
+      | IntLit (n, _) -> if n <= 255 then 1 else 2
+      | Field (Index (Ident (arr, _), _), fname) ->
         (match is_struct_array env arr with
         | Some sname ->
           (match try Some (struct_field env sname fname) with Not_found -> None with
           | Some (_, sz) -> sz
           | None -> 2)
         | None -> 2)
-      | Field (Ident v, fname) ->
+      | Field (Ident (v, _), fname) ->
         (match is_struct_var env v with
         | Some (sname, _) ->
           (match try Some (struct_field env sname fname) with Not_found -> None with
@@ -1369,9 +1369,9 @@ let codegen_program program =
     | GlobalConstDecl (name, None, expr) ->
       env.constants <- name :: env.constants;
       (match expr with
-      | IntLit n ->
+      | IntLit (n, _) ->
         Buffer.add_string env.func_code (sprintf "|%04x @%s\n" n name)
-      | Ident id ->
+      | Ident (id, _) ->
         Buffer.add_string env.func_code (sprintf "|%s @%s\n" id name)
       | _ ->
         Buffer.add_string env.func_code (sprintf "|0000 @%s\n" name))

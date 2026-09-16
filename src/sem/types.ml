@@ -12,16 +12,26 @@ let check_ctx : string option ref = ref None
 let set_locs t = loc_table := t
 let set_ctx n = check_ctx := Some n
 
+(* Proposal 12, exact lines: the last leaf (identifier, literal,
+   address) visited by the checker. Reset at statement, function
+   and declaration boundaries so only the current unit's leaves
+   count; generated nodes carry nopos and fall back to context. *)
+let last_leaf : Token.pos option ref = ref None
+let reset_leaf () = last_leaf := None
+
 let failwith (msg : string) =
   let prefix =
-    match !check_ctx with
-    | Some n ->
-      (match List.assoc_opt n !loc_table with
-       | Some p ->
-         let s = Token.string_of_pos p in
-         if s = "" then "" else s ^ ": "
-       | None -> "")
-    | None -> "" in
+    match !last_leaf with
+    | Some p when p.pfile <> "" -> Token.string_of_pos p ^ ": "
+    | _ ->
+      (match !check_ctx with
+       | Some n ->
+         (match List.assoc_opt n !loc_table with
+          | Some p ->
+            let s = Token.string_of_pos p in
+            if s = "" then "" else s ^ ": "
+          | None -> "")
+       | None -> "") in
   Stdlib.failwith (prefix ^ msg)
 
 (* Proposal 13: unused-discovery. Name-mentioned = used (mentioning
@@ -177,7 +187,7 @@ let is_empty_array = function
    Devices/groups never do (they aren't vars), so legacy paths stay
    untouched wherever this is false. *)
 let rec path_involves_struct env = function
-  | Ident n ->
+  | Ident (n, _) ->
     (match lookup_var env n with
      | Some t -> contains_struct t
      | None -> false)
@@ -301,12 +311,16 @@ let rec lookup_group_field env group_name field_name =
 
 let rec type_of_expr env expr =
   match expr with
-  | IntLit n ->
+  | IntLit (n, p) ->
+    last_leaf := Some p;
     if n >= 0 && n <= 255 then TypU8
     else if n >= 0 && n <= 65535 then TypU16
     else failwith (Printf.sprintf "Integer %d out of range" n)
-  | StringLit _ -> TypPointer TypU8
-  | Ident name ->
+  | StringLit (_, p) ->
+    last_leaf := Some p;
+    TypPointer TypU8
+  | Ident (name, p) ->
+    last_leaf := Some p;
     mark_used name;
     (match lookup_var env name with
     | Some typ -> typ
@@ -350,7 +364,7 @@ let rec type_of_expr env expr =
     (* Type check all arguments *)
     List.iter (fun arg -> ignore (type_of_expr env arg)) args;
     (match func_expr with
-    | Ident name ->
+    | Ident (name, _) ->
       (match lookup_func env name with
       | Some (params, return_typ) ->
         if List.length params <> List.length args then
@@ -401,7 +415,7 @@ let rec type_of_expr env expr =
       | None -> failwith (Printf.sprintf "`%s` has no field `%s`" sname field)
     in
     (match expr with
-    | Ident base ->
+    | Ident (base, _) ->
       (match lookup_var env base with
       | Some (TypStruct sname) -> mark_used base; struct_field_of sname
       | _ ->
@@ -419,7 +433,7 @@ let rec type_of_expr env expr =
             | _ -> TypU8))))
     | Index (arr, index) ->
       (match arr with
-      | Ident aname ->
+      | Ident (aname, _) ->
         (match lookup_var env aname with
         | Some (TypArray (TypStruct sname, _)) ->
           mark_used aname;
@@ -460,13 +474,14 @@ let rec type_of_expr env expr =
       | TypU16 -> TypU16
       | TypVoid -> TypU8
       | _ -> TypU8))
-  | AddrOf name ->
+  | AddrOf (name, p) ->
+    last_leaf := Some p;
     mark_used name;
     TypU16
   | RawLit _ -> TypU16
   | Assign (left, right) ->
     (match left with
-    | Ident n ->
+    | Ident (n, _) ->
       (match resolve_const env n with
       | Some true ->
         failwith (Printf.sprintf "cannot assign to constant `%s`" n)
@@ -502,7 +517,7 @@ let rec type_of_expr env expr =
    Only struct/array-typed nodes are traversed — devices, groups and
    anything else fail here, so callers try their own shapes first. *)
 and composite_typ env = function
-  | Ident n ->
+  | Ident (n, _) ->
     mark_used n;
     (match lookup_var env n with
      | Some t -> t
@@ -525,6 +540,7 @@ and composite_typ env = function
   | _ -> failwith "not a struct/array path"
 
 let rec type_check_stmt env stmt =
+  reset_leaf ();
   match stmt with
   | ExprStmt expr ->
     let t = type_of_expr env expr in
@@ -638,6 +654,7 @@ let rec type_check_stmt env stmt =
 
 let type_check_func env (func: func) =
   set_ctx func.name;
+  reset_leaf ();
   let func_env = create_env (Some env) in
   List.iter (fun (p: param) ->
     validate_type env (Printf.sprintf "parameter `%s` of `%s`" p.name func.name) p.typ;
@@ -675,6 +692,7 @@ let type_check_program program =
     | ImportDecl _ -> ()
     | GlobalVarDecl (name, typ, init) ->
       set_ctx name;
+      reset_leaf ();
       def_name ~func:"" name "global";
       validate_type global_env (Printf.sprintf "global `%s`" name) typ;
       (match init with
@@ -690,6 +708,7 @@ let type_check_program program =
       failwith "internal error: unelaborated global `:=` reached the type checker"
     | GlobalConstDecl (name, typopt, expr) ->
       set_ctx name;
+      reset_leaf ();
       (match typopt with
        | Some _ -> def_name ~func:"" name "constant"
        | None -> ());

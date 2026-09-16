@@ -1,5 +1,12 @@
 (* AST types for Etal *)
 
+(* Positions ride leaves only (proposal 12, exact lines): Ident,
+   IntLit, StringLit and AddrOf carry their token start. The checker
+   tracks the last leaf visited and errors name it — generated nodes
+   (macro expansion) carry nopos and fall back to declaration
+   context. Matches ignore positions with `_`. *)
+open Token
+
 type typ =
   | TypU8
   | TypU16
@@ -27,9 +34,9 @@ type unop =
   | Neg | NotBit | Not
 
 type expr =
-  | IntLit of int
-  | StringLit of string
-  | Ident of string
+  | IntLit of int * pos
+  | StringLit of string * pos
+  | Ident of string * pos
   | BinOp of binop * expr * expr
   | UnOp of unop * expr
   | Call of expr * expr list
@@ -38,7 +45,7 @@ type expr =
   | Assign of expr * expr
   | CompoundLit of string * expr list
   | RawLit of string  (* Raw hex literal like #0a, ;label *)
-  | AddrOf of string
+  | AddrOf of string * pos
 
 type stmt =
   | ExprStmt of expr

@@ -335,8 +335,10 @@ the parser prefixes every error via a shadowed `failwith`, the
 loader merges per-file name tables (dup errors cite both lines),
 and the checker/expander prefix via declaration context; `main`
 prints one `etal: error:` line plus the source line and exits 1.
-Checker errors point at the containing declaration — exact
-use-site lines need AST-wide positions, still open.)
+Follow-up landed too: identifier/literal/address leaves carry
+positions and the checker reports the last leaf visited, so most
+errors name exact lines (generated macro nodes fall back to
+context).)
 
 ## 13. Unused-definition warnings (P1)
 

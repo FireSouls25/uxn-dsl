@@ -117,14 +117,17 @@ let rec parse_typ parser =
 and parse_primary parser =
   match peek parser with
   | INT_LITERAL n ->
+    let loc = peek_pos parser in
     ignore (advance parser);
-    IntLit n
+    IntLit (n, loc)
   | STRING_LITERAL s ->
+    let loc = peek_pos parser in
     ignore (advance parser);
-    StringLit s
+    StringLit (s, loc)
   | IDENT s ->
+    let loc = peek_pos parser in
     ignore (advance parser);
-    Ident s
+    Ident (s, loc)
   | LPAREN ->
     ignore (advance parser);
     let expr = parse_expr parser in
@@ -261,11 +264,12 @@ and parse_mul_div parser =
 and parse_unary parser =
   match peek parser with
   | AMPERSAND ->
+    let loc = peek_pos parser in
     ignore (advance parser);
     (match peek parser with
     | IDENT s ->
       ignore (advance parser);
-      AddrOf s
+      AddrOf (s, loc)
     | _ -> failwith "Expected identifier after &")
   | MINUS ->
     ignore (advance parser);
@@ -455,8 +459,9 @@ and parse_stmt parser =
     Block body
   | IDENT _ ->
     let saved_pos = parser.pos in
+    let loc = peek_pos parser in
     let name = expect_ident parser in
-    let left = ref (Ident name) in
+    let left = ref (Ident (name, loc)) in
     let rec parse_field_chain () =
       match peek parser with
       | DOT ->
@@ -476,7 +481,7 @@ and parse_stmt parser =
     (match peek parser with
     | COLON ->
       (match !left with
-      | Ident id ->
+      | Ident (id, _) ->
         ignore (advance parser);
         let typ = parse_typ parser in
         (match peek parser with
@@ -502,7 +507,7 @@ and parse_stmt parser =
     | COLON_ASSIGN ->
       (* `name := value`: inferred-type mutable. *)
       (match !left with
-      | Ident id ->
+      | Ident (id, _) ->
         ignore (advance parser);
         let value = parse_expr parser in
         expect parser SEMICOLON;
@@ -515,7 +520,7 @@ and parse_stmt parser =
     | DOUBLE_COLON ->
       (* `name :: value`: inferred-type constant. *)
       (match !left with
-      | Ident id ->
+      | Ident (id, _) ->
         ignore (advance parser);
         let value = parse_expr parser in
         expect parser SEMICOLON;

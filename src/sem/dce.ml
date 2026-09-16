@@ -21,7 +21,7 @@
 open Ast
 
 let rec called_in_expr acc = function
-  | Call (Ident f, args) ->
+  | Call (Ident (f, _), args) ->
     List.fold_left called_in_expr (f :: acc) args
   | Call (f, args) ->
     List.fold_left called_in_expr acc (f :: args)
@@ -34,7 +34,7 @@ let rec called_in_expr acc = function
   | _ -> acc
 
 let rec addrs_in_expr acc = function
-  | AddrOf n -> n :: acc
+  | AddrOf (n, _) -> n :: acc
   | Call (f, args) -> List.fold_left addrs_in_expr acc (f :: args)
   | BinOp (_, l, r) -> addrs_in_expr (addrs_in_expr acc l) r
   | UnOp (_, e) -> addrs_in_expr acc e
