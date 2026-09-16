@@ -118,8 +118,11 @@ canonical 8-bit mono PCM at 44100Hz — exactly what Uxn plays
 natively, so samples embed with zero conversion; anything else
 (stereo, 16-bit, other rates, non-PCM) is a compile error, never a
 silent resample. Use `&name` to take a blob's address (e.g.
-`Screen.addr = &head_tile;`, `Audio0.addr = &blip;`). Blobs are not
-indexable — see [limitations](limitations.md).
+`Screen.addr = &head_tile;`, `Audio0.addr = &blip;`). Inline blobs
+also read as arrays (`head[2]`, whole-copy with `=`); file assets
+read element-wise but never whole-copy (their length is known only
+at assembly — index them). Bare blob values anywhere else are
+compile errors, not miscompiles.
 
 ## Buffers and arrays
 
@@ -252,3 +255,21 @@ data and tables the DSL cannot express — not for smuggling control
 flow, since placement after the code means tal `%macros` pasted this
 way would land after their use sites. (A legacy bare-`raw` form reads
 to end-of-file and must stay last; prefer the block form.)
+
+Inside a function or event body, the same `raw { ... }` emits
+inline TAL where it stands — the escape hatch for odd opcodes the
+typed surface cannot reach (stack juggling, computed jumps, tal
+`%macros` defined and used in order):
+
+```ux
+main :: fn() {
+    raw { %EMIT-A { #41 #18 DEO } }
+    raw { EMIT-A }
+}
+```
+
+Inline raw is unchecked text: it must keep the stack balanced
+itself, labels inside are not freshened (keep them unique per
+function), and any raw anywhere disables dead-function elimination
+(references may hide in text). It still goes through the
+assembler, so invalid TAL fails loudly there.

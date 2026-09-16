@@ -565,6 +565,11 @@ and parse_stmt parser =
     let expr = parse_expr parser in
     expect parser SEMICOLON;
     Assert (expr, loc)
+  | RAW_BLOCK s ->
+    (* `raw { ... }` in a body: inline TAL, emitted where it stands
+       (top-level `raw {}` still lands in the data section). *)
+    ignore (advance parser);
+    RawStmt s
   | _ ->
     let expr = parse_expr parser in
     expect parser SEMICOLON;

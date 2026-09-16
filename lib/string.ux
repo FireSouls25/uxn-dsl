@@ -1,0 +1,48 @@
+( lib/string.ux — NUL-terminated string helpers over `&u8`
+  addresses (literals, `&blob` data, or globals holding an address
+  — `msg: &u8 = "hi";` just works). Buffers do NOT convert to
+  addresses (call arguments reject whole arrays): loop over them
+  directly — three lines, see test_string.ux. No concatenation and
+  no slicing: strings are read-only views plus explicit copies into
+  caller buffers; lengths ride the NUL, never a header. )
+
+( Byte length before the NUL. )
+strlen :: fn(s: &u8) -> u16 {
+    n: u16 = 0;
+    while s[n] != 0 {
+        n = n + 1;
+    }
+    return n;
+}
+
+( 1 when both strings hold the same bytes through the NUL. )
+streq :: fn(a: &u8, b: &u8) -> u8 {
+    i: u16 = 0;
+    ca: u8 = a[i];
+    cb: u8 = b[i];
+    while ca != 0 {
+        if ca != cb {
+            return 0;
+        }
+        i = i + 1;
+        ca = a[i];
+        cb = b[i];
+    }
+    if cb != 0 {
+        return 0;
+    }
+    return 1;
+}
+
+( Copy src through the NUL into dst (with the NUL). dst must be a
+  writable buffer (or RAM address) — never a literal. )
+macro strcopy(dst: &u8, src: &u8) {
+    i: u16 = 0;
+    c: u8 = src[i];
+    while c != 0 {
+        dst[i] = c;
+        i = i + 1;
+        c = src[i];
+    }
+    dst[i] = 0;
+}

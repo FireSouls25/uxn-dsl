@@ -83,6 +83,9 @@ main :: fn() {
     grid_a[3] = 10;
     grid_b = grid_a;
     varvara.console.write(48 + grid_b[0] + grid_b[1] + grid_b[2] + grid_b[3] - 34);
+    raw { %EMIT-A { #41 #18 DEO } }
+    raw { EMIT-A }
+    varvara.console.write(blip[8]);
 }
 
 late :: fn(x: u16) -> u16 {

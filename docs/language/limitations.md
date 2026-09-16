@@ -47,8 +47,10 @@ not are marked **footgun**.
   evaluate.
 - **Data bytes are unchecked**: keep inline `data` values in 0–255 or
   the emitted hex is garbage. (Assets are validated as whole tiles.)
-- **Data blobs are not indexable** — take `&blob` and do address
-  arithmetic, or copy bytes into a buffer first.
+- **Data blobs read as arrays**: inline blobs index and
+  whole-copy; file assets index element-wise but never whole-copy
+  (length is assembly-time). Buffers and blobs never convert to
+  `&u8` call arguments — loop or copy explicitly.
 - **Structs are v2**: scalar/`struct`/fixed-array fields (no `mod`,
   no pointers; inner structs declared first, so cycles can't form);
   chained paths (`a.b.c`, `rows[i].pos.x`, `t.notes[2].pitch`) and
@@ -77,9 +79,10 @@ not are marked **footgun**.
 - **Macro bodies cannot capture caller locals** (params, globals and
   their own locals only); a statement-macro `return <expr>;` discards
   the value, a bare `return;` returns from the caller.
-- **`raw { }` lands in the data section**: fine for tables, wrong for
-  tal `%macros` (they would land after use sites). Legacy bare `raw`
-  reads to end-of-file and must stay last.
+- **Top-level `raw { }` lands in the data section**: fine for
+  tables, wrong for tal `%macros` (they would land after use
+  sites) — use body-level `raw {}` for inline code. Legacy bare
+  `raw` reads to end-of-file and must stay last.
 - **`brk` ends the vector, not the function.** It belongs in `event`
   handlers only — a `BRK` on a plain `fn` path (including `main ::
   fn()`) returns to the emulator early.
@@ -98,11 +101,12 @@ not are marked **footgun**.
   invalid` at assembly): rename the datum. Prefer distinctive
   asset names (`hero0`, not `face0`).
 - Reserved but unused keywords: `let`, `byte`,
-  `short`. The `RawLit`, `CompoundLit` and `RawStmt` AST nodes exist
-  but no syntax builds them.
-- No string variables or concatenation — only literals, `print`, and
-  the raw console ports. Escape set is `\n \t \\ \"` (other `\x`
-  yields literal `x`).
+`short`. The `RawLit` and `CompoundLit` AST nodes exist
+but no syntax builds them (`RawStmt` does — `raw {}` blocks).
+- No string concatenation or slicing — `&u8` views (literals,
+  `&blob`, address globals) with `lib/string.ux` (`strlen`/`streq`/
+  `strcopy`), plus literals, `print`, and the raw console ports.
+  Escape set is `\n \t \\ \"` (other `\x` yields literal `x`).
 - The `Console` device is predeclared; redeclaring it collides.
 - Devices beyond console/screen/controller/mouse/datetime/file
   (other than audio — see `lib/audio.ux`, `lib/song.ux` — FileA —

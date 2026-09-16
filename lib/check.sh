@@ -58,6 +58,7 @@ check test_trig 0000006200b500ec01010000010100b500b50101000000b5ff4b0000feffff4b
 check_cwd test_file 0a04303030610a30313233343536373839010a010121 etalfilet.bin
 check test_font 3f3f20417e3f3f08f0
 check test_mouse 0100020000010403
+check test_string 0003010000014869210003
 check test_assert 41
 
 # check_brk <harness> <line> <col>: the ROM must print

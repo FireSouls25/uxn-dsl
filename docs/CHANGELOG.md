@@ -85,7 +85,11 @@ Unused-discovery warnings (globals, stored consts, locals, params,
 data/assets — never functions/macros/labels) with positions.
 Animation:
 `Anim` rows with `LOOP/ONCE/PINGPONG` modes, `anim_stop/start`
-freeze/resume plus `anim_playing` query. Software
+freeze/resume plus `anim_playing` query. Inline `raw {}` in bodies
+for TAL the typed surface cannot reach (golden-pinned). Data blobs
+read as arrays (inline: index + whole-copy; file assets: index
+only); string literals index with byte stride; `lib/string.ux`
+(`strlen`/`streq`/`strcopy`) over `&u8` views. Software
 3D: `trig.ux`
 (self-built turns256 sine table) and `gfx3d.ux` (rotate/project/DDA
 wireframe) with a spinning-cube demo. Dead-function elimination

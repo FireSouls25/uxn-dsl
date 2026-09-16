@@ -166,6 +166,13 @@ let reject_array_value what typ =
   if is_array_value typ then
     failwith (Printf.sprintf "%s: cannot use a whole array value (index an element)" what)
 
+(* Zero-length arrays (empty inline data, file assets whose size
+   is known only at assembly): copying them would silently move
+   nothing — index elements instead. *)
+let is_empty_array = function
+  | TypArray (_, 0) -> true
+  | _ -> false
+
 (* v2: does an Ident/Index/Field chain touch a struct-typed node?
    Devices/groups never do (they aren't vars), so legacy paths stay
    untouched wherever this is false. *)
@@ -457,7 +464,10 @@ let rec type_of_expr env expr =
        holding a struct or array is still an error. *)
     (match left_typ, right_typ with
      | TypStruct s1, TypStruct s2 when s1 = s2 -> left_typ
-     | TypArray (e1, n1), TypArray (e2, n2) when e1 = e2 && n1 = n2 -> left_typ
+     | TypArray (e1, n1), TypArray (e2, n2) when e1 = e2 && n1 = n2 ->
+       if n1 = 0 then
+         failwith "cannot copy zero-length arrays (their size is unknown — index elements instead)";
+       left_typ
      | _ ->
        if contains_struct left_typ || contains_struct right_typ then
          failwith "cannot assign whole structs of different type (same-type struct values copy with `=`)";
@@ -719,8 +729,18 @@ let type_check_program program =
       add_var global_env g.group_name base_size;
       let fields = List.map (fun (fname, ftyp) -> (fname, ftyp)) g.fields in
       add_group global_env g.group_name fields
-    | DataDecl d -> def_name ~func:"" d.data_name "data"
-    | AssetDecl a -> def_name ~func:"" a.asset_name "asset"
+    | DataDecl d ->
+      set_ctx d.data_name;
+      def_name ~func:"" d.data_name "data";
+      (* Proposal 10: inline blobs read as u8 arrays (indexable,
+         copyable with known size). *)
+      add_var global_env d.data_name (TypArray (TypU8, List.length d.data_bytes))
+    | AssetDecl a ->
+      set_ctx a.asset_name;
+      def_name ~func:"" a.asset_name "asset";
+      (* File assets read the same way, but their length is known
+         only at assembly — indexed access only, never whole-copy. *)
+      add_var global_env a.asset_name (TypArray (TypU8, 0))
     | MetaDecl (title, author) ->
       set_ctx "meta";
       let check field v =

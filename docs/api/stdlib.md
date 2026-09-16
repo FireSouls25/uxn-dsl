@@ -164,6 +164,15 @@ address math both macros share (gated headlessly in `test_font`;
 glyph shapes are eyeballed from the `@font8x8` blob). Needs the
 `Screen` device at call sites only.
 
+## string.ux
+
+NUL-terminated strings over `&u8` addresses: literals, `&blob`
+data, and address globals (`msg: &u8 = "hi";`) flow into
+`strlen` / `streq` (pure) and `strcopy` (macro into a caller
+buffer — never a literal). Buffers do not convert to addresses,
+so length/count loops over them stay game-side (three lines, as
+in the harness). No concatenation, no slicing, no headers.
+
 ## gfx3d.ux
 
 Software 3D wireframe (Varvara has no 3D): model units are pixels

@@ -58,6 +58,10 @@ type codegen_env = {
      next free address; (name, addr, size) in allocation order. *)
   mutable next_buffer_addr: int;
   mutable buffer_order: (string * int * int) list;
+  (* Data/asset blob names: registered in global_vars for address
+     math (proposal 10), but they live in the data section — never
+     zero-page reservations (see the |00 emission below). *)
+  mutable data_order: string list;
   (* ROM metadata from `meta {}` (title, author), wired at boot. *)
   mutable meta: (string * string) option;
   (* Zero-page bytes reserved so far (globals + spilled locals). *)
@@ -90,6 +94,7 @@ let create_env () = {
   func_ret = None;
   next_buffer_addr = buffer_region_base;
   buffer_order = [];
+  data_order = [];
   meta = None;
   zp_used = 0;
 }
@@ -346,12 +351,14 @@ let rec expr_is_u8 env expr =
         | Some (Ast.TypU8 | Ast.TypBool) -> true
         | _ -> false))
   | Index (arr, _) ->
-    (* v2: byte element of an array-typed path. *)
+    (* v2: byte element of an array-typed path (arrays and string
+       pointers alike). *)
     (match arr with
      | Ident _ -> false
      | _ ->
        (match try Some (composite_node_typ env arr) with _ -> None with
         | Some (Ast.TypArray (Ast.TypU8, _)) | Some (Ast.TypArray (Ast.TypBool, _)) -> true
+        | Some (Ast.TypPointer Ast.TypU8) | Some (Ast.TypPointer Ast.TypBool) -> true
         | _ -> false))
   | _ -> false
 
@@ -1142,6 +1149,7 @@ let rec codegen_stmt env stmt =  match stmt with
          | _ ->
            (match try Some (composite_node_typ env arr) with _ -> None with
             | Some (Ast.TypArray (Ast.TypU8, _)) | Some (Ast.TypArray (Ast.TypBool, _)) -> 1
+            | Some (Ast.TypPointer Ast.TypU8) | Some (Ast.TypPointer Ast.TypBool) -> 1
             | _ -> 2))
       | _ -> 2
     in
@@ -1419,12 +1427,24 @@ let codegen_program program =
       end
     | DataDecl d ->
       Buffer.add_string env.data (sprintf "@%s [ " d.data_name);      List.iter (fun b -> Buffer.add_string env.data (sprintf "%02x " b)) d.data_bytes;
-      Buffer.add_string env.data "]\n"
+      Buffer.add_string env.data "]\n";
+      (* Proposal 10: blobs address like global arrays (`;name`), so
+         indexing reuses the existing absolute math. The addr string
+         is bookkeeping only — never emitted. *)
+      let n = List.length d.data_bytes in
+      let info = { name = d.data_name; addr = "$0000"; is_local = false;
+        typ = Ast.TypArray (Ast.TypU8, n); size = n } in
+      env.global_vars <- (d.data_name, info) :: env.global_vars;
+      env.data_order <- d.data_name :: env.data_order
     | AssetDecl a ->
       let bytes = read_asset_bytes a.asset_name a.asset_path in
       Buffer.add_string env.data (sprintf "@%s [ " a.asset_name);
       List.iter (fun b -> Buffer.add_string env.data (sprintf "%02x " b)) bytes;
-      Buffer.add_string env.data "]\n"
+      Buffer.add_string env.data "]\n";
+      let info = { name = a.asset_name; addr = "$0000"; is_local = false;
+        typ = Ast.TypArray (Ast.TypU8, 0); size = 0 } in
+      env.global_vars <- (a.asset_name, info) :: env.global_vars;
+      env.data_order <- a.asset_name :: env.data_order
     | BufferDecl b ->
       let esz = (match b.buf_elem with
         | Ast.TypU8 | Ast.TypBool -> 1
@@ -1520,7 +1540,9 @@ let codegen_program program =
       List.exists (fun (n, _, _) -> n = name) env.buffer_order
     in
     List.iter (fun (_, info) ->
-      if not (List.mem_assoc info.name env.groups) && not (is_buffered info.name) then
+      if not (List.mem_assoc info.name env.groups)
+        && not (is_buffered info.name)
+        && not (List.mem info.name env.data_order) then
         Buffer.add_string buf (sprintf "    @%s $%d\n" info.name info.size)
     ) (List.rev env.global_vars);
     Buffer.add_string buf "\n"

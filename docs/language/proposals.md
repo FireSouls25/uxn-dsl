@@ -300,6 +300,13 @@ through the existing address math (`;head_chr`, scaled index, `LDA`),
 and bare array idents should decay to their address (C-like) instead
 of emitting garbage. Small, coherent, and it removes a silent
 miscompile.
+(obsolete — implemented on `dev`: inline blobs register as
+`TypArray (TypU8, len)` (indexable, whole-copyable), file assets as
+`(TypU8, 0)` (indexed access only — length is assembly-time, so
+whole-copy is a loud error); bare blob values hit the array-value
+rules instead of miscompiling. NOT done: address decay
+(buffers/blobs still don't convert to `&u8` call arguments) —
+needs a targeted follow-up.)
 
 ## 11. `assert` for self-checking harnesses (P1, pairs with 12)
 
