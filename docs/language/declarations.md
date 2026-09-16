@@ -122,7 +122,10 @@ silent resample. Use `&name` to take a blob's address (e.g.
 also read as arrays (`head[2]`, whole-copy with `=`); file assets
 read element-wise but never whole-copy (their length is known only
 at assembly — index them). Bare blob values anywhere else are
-compile errors, not miscompiles.
+compile errors, not miscompiles. Arrays (and explicit `&name`
+addresses) decay into matching pointer slots — `strlen(sbuf)`,
+`p: &u8 = buf` — while plain `u16` values stay rejected, so
+address typos still fail loudly.
 
 ## Buffers and arrays
 

@@ -389,14 +389,24 @@ let rec codegen_expr env expr =
     if List.mem name env.constants then
       emit env ";%s" name
     else
+      (* Address decay (proposal 10): a bare array ident is its
+         address (`;name`) — every value use is rejected upstream,
+         so only decay positions (pointer args/inits) reach here.
+         Every array (zp, buffer, blob) owns an absolute label. *)
       (try
         let info = List.assoc name env.local_vars in
-        (* Locals are zero-page residents under mangled names. *)
-        if info.size = 1 then emit env ".%s LDZ" info.addr else emit env ".%s LDZ2" info.addr
+        (match info.typ with
+         | Ast.TypArray _ -> emit env ";%s" info.addr
+         | _ ->
+           (* Locals are zero-page residents under mangled names. *)
+           if info.size = 1 then emit env ".%s LDZ" info.addr else emit env ".%s LDZ2" info.addr)
       with Not_found ->
         try
           let info = List.assoc name env.global_vars in
-          if info.size = 1 then emit env ".%s LDZ" info.name else emit env ".%s LDZ2" info.name
+          (match info.typ with
+           | Ast.TypArray _ -> emit env ";%s" info.name
+           | _ ->
+             if info.size = 1 then emit env ".%s LDZ" info.name else emit env ".%s LDZ2" info.name)
         with Not_found ->
           emit env ".%s LDZ2" name)
   | BinOp (op, left, right) ->

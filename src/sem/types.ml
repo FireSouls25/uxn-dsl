@@ -224,6 +224,18 @@ let rec assign_compat dst src =
     | _ -> false)
   | _ -> false
 
+(* Address decay (proposal 10, second half): arrays — and explicit
+   `&name` addresses — flow into pointer slots; the address is what
+   moves. Plain u16 values do NOT (that would swallow typos). *)
+let decays_to_pointer dst src = function
+  | AddrOf _ ->
+    (match dst with TypPointer _ -> true | _ -> false)
+  | _ ->
+    (match dst, src with
+     | TypPointer TypU8, TypArray (e, _) -> e = TypU8 || e = TypBool
+     | TypPointer TypU16, TypArray (TypU16, _) -> true
+     | _ -> false)
+
 (* Result of `+ - * / %`: same modulus preserves the bound (width
    widens), mixed moduli are a type error, mixing with plain coerces
    to plain — the result is no longer bounded. *)
@@ -336,10 +348,7 @@ let rec type_of_expr env expr =
     | Not -> TypBool)
   | Call (func_expr, args) ->
     (* Type check all arguments *)
-    List.iter (fun arg ->
-      let arg_typ = type_of_expr env arg in
-      reject_array_value "call argument" arg_typ
-    ) args;
+    List.iter (fun arg -> ignore (type_of_expr env arg)) args;
     (match func_expr with
     | Ident name ->
       (match lookup_func env name with
@@ -352,7 +361,10 @@ let rec type_of_expr env expr =
           if contains_struct param.typ || contains_struct arg_typ then
             failwith (Printf.sprintf "struct argument `%s` of function `%s` is not supported (pass fields)"
               param.name name);
-          if not (assign_compat param.typ arg_typ) then
+          if is_array_value arg_typ && not (decays_to_pointer param.typ arg_typ arg) then
+            failwith (Printf.sprintf "array argument `%s` of function `%s` needs a matching pointer parameter (index an element)"
+              param.name name);
+          if not (assign_compat param.typ arg_typ || decays_to_pointer param.typ arg_typ arg) then
             failwith (Printf.sprintf "Type mismatch for argument %s of function %s"
               param.name name)
         ) params args;
@@ -364,7 +376,10 @@ let rec type_of_expr env expr =
            pre-collected whole-program (proposal 9), so anything left
            is a typo — fail here instead of at assembly time. *)
         failwith (Printf.sprintf "undefined function `%s`" name))
-    | Field _ -> TypVoid
+    | Field _ ->
+      (* Foreign/device calls take scalars only (no decay targets). *)
+      List.iter (fun arg -> reject_array_value "call argument" (type_of_expr env arg)) args;
+      TypVoid
     | _ -> failwith "Invalid function call")
   | Index (arr, index) ->
     let arr_typ = type_of_expr env arr in
@@ -468,6 +483,7 @@ let rec type_of_expr env expr =
        if n1 = 0 then
          failwith "cannot copy zero-length arrays (their size is unknown — index elements instead)";
        left_typ
+     | _, _ when decays_to_pointer left_typ right_typ right -> left_typ
      | _ ->
        if contains_struct left_typ || contains_struct right_typ then
          failwith "cannot assign whole structs of different type (same-type struct values copy with `=`)";
@@ -586,7 +602,7 @@ let rec type_check_stmt env stmt =
       let init_typ = type_of_expr env expr in
       if contains_struct typ || contains_struct init_typ then
         failwith (Printf.sprintf "cannot initialize `%s` with a whole struct (declare bare, then assign fields or copy with `=`)" name);
-      if not (assign_compat typ init_typ) then
+      if not (assign_compat typ init_typ || decays_to_pointer typ init_typ expr) then
         failwith (Printf.sprintf "Type mismatch in variable declaration for %s" name)
     | None -> ());
     add_var env name typ
@@ -666,7 +682,7 @@ let type_check_program program =
         let init_typ = type_of_expr global_env expr in
         if contains_struct typ || contains_struct init_typ then
           failwith (Printf.sprintf "cannot initialize `%s` with a whole struct (declare bare, then assign fields or copy with `=`)" name);
-        if not (assign_compat typ init_typ) then
+        if not (assign_compat typ init_typ || decays_to_pointer typ init_typ expr) then
           failwith (Printf.sprintf "Type mismatch in global variable declaration for %s" name)
       | None -> ());
       add_var global_env name typ

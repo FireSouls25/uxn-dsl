@@ -304,9 +304,9 @@ miscompile.
 `TypArray (TypU8, len)` (indexable, whole-copyable), file assets as
 `(TypU8, 0)` (indexed access only — length is assembly-time, so
 whole-copy is a loud error); bare blob values hit the array-value
-rules instead of miscompiling. NOT done: address decay
-(buffers/blobs still don't convert to `&u8` call arguments) —
-needs a targeted follow-up.)
+rules instead of miscompiling. Address decay done too: arrays flow
+into matching `&u8`/`&u16` parameters and initializers (the address
+moves; plain `u16` still rejected), so `strlen(sbuf)` just works.)
 
 ## 11. `assert` for self-checking harnesses (P1, pairs with 12)
 
