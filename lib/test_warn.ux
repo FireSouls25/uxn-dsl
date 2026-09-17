@@ -17,4 +17,10 @@ main :: fn() {
     unused_l: u8 = 1;
     w: u16 = &used_blob;
     varvara.console.write(v + w);
+    shown(1);
+}
+( paren-glyph style demo ( ( ) ) end )
+after_trap: u8 = 7;
+shown :: fn(v: u16) -> u16 {
+    return v + 1 + after_trap;
 }

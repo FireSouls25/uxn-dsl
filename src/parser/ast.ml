@@ -66,6 +66,10 @@ type stmt =
   | RPush of expr
   | RPop
   | RPeek
+  (* `_ = expr;`: evaluate and discard. The explicit opt-out for the
+     discarded-result warning — documents that ignoring the value is
+     deliberate (e.g. a spawn kept for its side effect). *)
+  | Drop of expr
   (* `assert expr;` (proposal 11): the string is the failure location
      (`file:line:col`, baked by the parser — positions don't survive
      to codegen any other way). Failing halts with that message. *)

@@ -105,9 +105,26 @@ check_warn() {
   echo "$name ok"
 }
 check_warn test_warn \
+  'parens inside comment may nest and swallow code, write glyph names as words' '22:1' \
+  'discarded return value of `shown`' '20:5' \
   'unused global `unused_g`' '6:1' \
   'unused constant `STORED_C`' '8:1' \
   'unused data `unused_blob`' '11:1' \
   'unused parameter `q` in fn `show`' '12:1' \
   'unused local `unused_l` in fn `main`' '15:1'
 check test_gfx3d 0680068079800680068079807980798029e029e0562029e029e056205620562029e029e00680068029e0562006807980562029e0798006805620562079807980fe121f09400066c91db6512540007eb940000fc981ee1f0940003ab2624a5125
+
+# check_fail <harness> <fragment>: the compile must fail with the
+# fragment on stderr (negative probes like test_event_call never
+# assemble, so check can't gate them).
+check_fail() {
+  name=$1
+  want=$2
+  err=$("$ETAL" -t "$ROOT/lib/$name.ux" -o "$TMPD/$name.tal" 2>&1) || true
+  echo "$err" | grep -q "etal: error:" \
+    || fail "$name: compiled, want failure"
+  echo "$err" | grep -qF "$want" \
+    || fail "$name: wrong error: [$err]"
+  echo "$name ok"
+}
+check_fail test_event_call 'cannot call event `vec_bad`'

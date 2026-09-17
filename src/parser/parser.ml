@@ -452,6 +452,13 @@ and parse_stmt parser =
     ignore (advance parser);
     expect parser SEMICOLON;
     RPeek
+  | UNDERSCORE ->
+    (* `_ = expr;`: explicit discard (see Drop). *)
+    ignore (advance parser);
+    expect parser ASSIGN;
+    let expr = parse_expr parser in
+    expect parser SEMICOLON;
+    Drop expr
   | LBRACE ->
     ignore (advance parser);
     let body = parse_stmts parser in

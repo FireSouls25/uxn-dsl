@@ -76,6 +76,7 @@ let skip_comment lexer =
     else begin
       let saved_pos = lexer.pos in
       let saved_col = lexer.col in
+      let start_line = lexer.line in
       ignore (advance lexer);
       (match peek lexer with
       | Some ')' ->
@@ -86,7 +87,7 @@ let skip_comment lexer =
       | _ ->
         let rec loop depth =
           match peek lexer with
-          | Some '(' -> 
+          | Some '(' ->
             ignore (advance lexer);
             loop (depth + 1)
           | Some ')' ->
@@ -98,6 +99,41 @@ let skip_comment lexer =
           | None -> ()
         in
         loop 1;
+        (* An inner paren group holding only whitespace — `( ( )` —
+           nests instead of closing, so the comment swallows the rest
+           of the line (a whole font row vanished this way and every
+           later glyph rendered shifted). Warn on exactly that shape;
+           balanced remarks like `(see foo(x))` or `(wraps mod 65536)`
+           hold real text and stay quiet. *)
+        let len = lexer.pos - saved_pos in
+        let body =
+          if len >= 3 && lexer.source.[lexer.pos - 1] = ')' then
+            String.sub lexer.source (saved_pos + 2) (len - 3)
+          else if len > 2 then
+            String.sub lexer.source (saved_pos + 2) (len - 2)
+          else "" in
+        let is_space c = c = ' ' || c = '\t' || c = '\n' || c = '\r' in
+        (* `\(\s+\)`: an open paren, at least one whitespace char, then
+           the close — `fn()` (zero spaces) stays quiet. *)
+        let rec has_trap i =
+          if i >= String.length body then false
+          else if body.[i] = '(' then
+            let rec spaces seen j =
+              if j >= String.length body then false
+              else if is_space body.[j] then spaces true (j + 1)
+              else seen && body.[j] = ')'
+            in
+            if spaces false (i + 1) then true else has_trap (i + 1)
+          else has_trap (i + 1)
+        in
+        if has_trap 0 then begin
+          let s = Token.string_of_pos
+            { pfile = !cur_file; pline = start_line; pcol = saved_col } in
+          (* Gate-shaped like the checker warnings: `warning: MSG (LOC)`
+             with nothing after the location (see check_warn). *)
+          let at = if s = "" then "" else " (" ^ s ^ ")" in
+          Printf.eprintf "warning: parens inside comment may nest and swallow code, write glyph names as words%s\n" at
+        end;
         true)
     end
   | Some '/' ->

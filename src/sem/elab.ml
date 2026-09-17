@@ -57,11 +57,11 @@ let rec elab_stmts env = function
 let elaborate_program program =
   let global_env = Types.create_env None in
   Types.add_func global_env "print"
-    [{ name = "msg"; typ = TypPointer TypU8 }] None;
+    [{ name = "msg"; typ = TypPointer TypU8 }] None false;
   (* Proposal 9: signatures first, so inferred initializers can call
      functions defined later in the file — mirroring the checker. *)
   List.iter (function
-    | FuncDecl f -> Types.add_func global_env f.name f.params f.return_typ
+    | FuncDecl f -> Types.add_func global_env f.name f.params f.return_typ f.is_event
     | _ -> ()) program;
   List.map (function
     | FuncDecl f as d ->

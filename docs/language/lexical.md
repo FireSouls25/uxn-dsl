@@ -21,7 +21,9 @@ Paren *glyph names* inside comments are a footgun: `( ( )` nests (the
 inner `(` opens a level), so the comment swallows the rest of the
 line — a whole font row vanished this way and every later glyph
 rendered shifted by one (`CHESS` came out as `DIFTT`). Name them with
-words instead (`( lparen )`, `( rparen )`).
+words instead (`( lparen )`, `( rparen )`); the lexer now warns on an
+inner paren group holding only whitespace, which is exactly the trap
+shape (balanced remarks like `(see foo(x))` stay quiet).
 
 ## Literals
 

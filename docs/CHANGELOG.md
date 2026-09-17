@@ -122,3 +122,9 @@ the same slide, with the bot reply chained off its last frame (no
 overwrite, free thinking beat; cap/status ride buffer scratch).
 Menu QUIT writes nonzero `System/state` for a real exit — `brk`
 only ended one frame.
+Phase-1 diagnostics from the chess session: calls into `event`
+vectors are compile errors (only `main` exempt; gated by
+`check_fail`), bare valued calls warn with `_ = expr;` as the
+explicit-discard idiom (new `Drop` node end to end), and comments
+holding whitespace-only inner parens warn at lex time (the exact
+`( ( )` trap, gated in `test_warn.ux`).

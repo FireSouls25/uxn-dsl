@@ -79,7 +79,9 @@ let report_uses program =
 
 type type_env = {
   mutable vars: (string * typ) list;
-  mutable funcs: (string * (param list * typ option)) list;
+  (* params, return type, and whether the callee is an event vector
+     (a JSR into one never comes back — see the Call case). *)
+  mutable funcs: (string * (param list * typ option * bool)) list;
   mutable devices: (string * (string * typ) list) list;
   mutable groups: (string * (string * typ) list) list;
   (* Structs: name -> [(field, type)]; offsets derive from sizes. *)
@@ -280,8 +282,8 @@ let rec lookup_func env name =
     | Some p -> lookup_func p name
     | None -> None)
 
-let add_func env name (params: param list) return_typ =
-  env.funcs <- (name, (params, return_typ)) :: env.funcs
+let add_func env name (params: param list) return_typ is_event =
+  env.funcs <- (name, (params, return_typ, is_event)) :: env.funcs
 
 let add_device env name ports =
   env.devices <- (name, ports) :: env.devices
@@ -364,9 +366,18 @@ let rec type_of_expr env expr =
     (* Type check all arguments *)
     List.iter (fun arg -> ignore (type_of_expr env arg)) args;
     (match func_expr with
-    | Ident (name, _) ->
+    | Ident (name, pos) ->
       (match lookup_func env name with
-      | Some (params, return_typ) ->
+      | Some (params, return_typ, is_event) ->
+        (* Point call errors at the callee, not at the last argument
+           (args were already checked above). *)
+        last_leaf := Some pos;
+        (* Vectors never return (they end in BRK), so a JSR into one
+           abandons the caller's return address — the frame's stacks
+           rot one entry per call. Only `main` may be an event: the
+           entry stub JSRs into it once and has nothing to return to. *)
+        if is_event && name <> "main" then
+          failwith (Printf.sprintf "cannot call event `%s` (vectors never return — factor the body into a plain fn)" name);
         if List.length params <> List.length args then
           failwith (Printf.sprintf "Function %s expects %d arguments, got %d" 
             name (List.length params) (List.length args));
@@ -544,6 +555,20 @@ let rec type_check_stmt env stmt =
   match stmt with
   | ExprStmt expr ->
     let t = type_of_expr env expr in
+    (* A valued call as a bare statement silently drops the result —
+       for getters like scene_pop that usually means a lost update
+       (and a leaked stack slot per call). Purely local to the AST,
+       so unlike proposal 13's name tracking this warns in raw
+       programs too. *)
+    (match expr with
+     | Call (Ident (name, p), _) ->
+       (match lookup_func env name with
+        | Some (_, Some _, _) ->
+          let s = Token.string_of_pos p in
+          let at = if s = "" then "" else " (" ^ s ^ ")" in
+          Printf.eprintf "warning: discarded return value of `%s`%s\n" name at
+        | _ -> ())
+     | _ -> ());
     (match expr, t with
      (* v2: a same-type struct/array copy is a complete statement (the
         Assign case already rejected mixed types). It leaves nothing
@@ -575,6 +600,16 @@ let rec type_check_stmt env stmt =
       failwith "assert condition must be boolean";
   | RPop -> ()
   | RPeek -> ()
+  | Drop e ->
+    (* Explicit discard: the value must exist (dropping void means the
+       confusion runs the other way — drop the call instead) and must
+       be stack-sized (whole structs/arrays never sit on the stack). *)
+    let t = type_of_expr env e in
+    (match mod_base t with
+     | TypVoid -> failwith "cannot discard a void expression (drop the call itself instead)"
+     | _ -> ());
+    reject_struct_value "discarded value" t;
+    reject_array_value "discarded value" t
   | RawStmt _ -> ()
   | If (condition, then_body, elifs, else_body) ->
     let cond_typ = type_of_expr env condition in
@@ -677,13 +712,13 @@ let typ_of_size size =
 let type_check_program program =
   let global_env = create_env None in
   (* Add built-in functions *)
-  add_func global_env "print" [{ name = "msg"; typ = TypPointer TypU8 }] None;
+  add_func global_env "print" [{ name = "msg"; typ = TypPointer TypU8 }] None false;
   (* Proposal 9: collect every function signature before checking any
      body, so calls are arity- and type-checked order-independently.
      This deliberately does not enable recursion — locals stay static
      (see limitations); it only makes call checking complete. *)
   List.iter (function
-    | FuncDecl f -> add_func global_env f.name f.params f.return_typ
+    | FuncDecl f -> add_func global_env f.name f.params f.return_typ f.is_event
     | _ -> ()) program;
   List.iter (fun decl ->
     match decl with

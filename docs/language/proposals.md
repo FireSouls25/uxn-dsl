@@ -402,6 +402,37 @@ if b & 16 != 0 { ... }   ( up held, regardless of other bits )
 Longer term this is evidence for `match` guards (proposal 3): plain
 equality dispatch preserves the gap, bitmask arms would close it.
 
+## 17. No calls into events (P0)
+
+A JSR into an `event` never comes back (vectors end in `BRK`), so
+each call rots the frame's stacks one entry — found headless as a
+two-byte-per-frame return-stack crawl. Reject at check time with the
+callee position; only `main` is exempt (the entry stub JSRs into it
+once and has nothing to return to). `AddrOf` vectors are unaffected.
+(obsolete — implemented on `dev`: `cannot call event` error, gated
+by a negative-compile `check_fail` on `test_event_call.ux`.)
+
+## 18. Discarded-result warnings + `_ =` (P1)
+
+A valued call as a bare statement drops the value — for getters like
+`scene_pop` that meant a lost update plus a leaked stack slot per
+call, found the same headless session as 17. Warn with the callee
+position (purely local, so raw programs warn too), and give the
+intentional case a spelling: `_ = expr;` evaluates then `POP`/`POP2`
+by width, and rejecting `void`/whole-value drops keeps it honest.
+(obsolete — implemented on `dev`: warning plus `Drop` through
+parse/check/DCE/expand/codegen, both gated by `check_warn` on
+`test_warn.ux`, with `test_scene.ux` converted to the idiom.)
+
+## 19. Comment-paren lint (P1)
+
+Nesting is documented (see [lexical](lexical.md)), but the trap shape
+— an inner paren group holding only whitespace, as in a `( ( )`
+glyph comment — silently eats the rest of the line instead of failing
+loud. Warn at lex time on exactly that shape; balanced remarks stay
+quiet. (obsolete — implemented on `dev`, gated by the trap comment
+in `test_warn.ux`.)
+
 ## Deliberately not proposed
 
 - **Signed arithmetic.** The hardware has none; `Neg`-as-`0-x` plus

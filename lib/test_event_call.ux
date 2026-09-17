@@ -1,0 +1,9 @@
+( negative probe: JSR into an event vector never comes back, so the
+  checker rejects the call (only the `main` entry may be an event).
+  Never assembles — gated by check_fail, not check. )
+vec_bad :: event() {
+    varvara.console.write(1);
+}
+main :: fn() {
+    vec_bad();
+}

@@ -1197,6 +1197,10 @@ let rec codegen_stmt env stmt =  match stmt with
     emit env "STHr\n"
   | RPeek ->
     emit env "STHkr\n"
+  | Drop e ->
+    (* The checker rejected void/struct/array, so exactly 1-2 bytes. *)
+    codegen_expr env e;
+    if expr_is_u8 env e then emit env " POP\n" else emit env " POP2\n"
   | InferDecl _ ->
     failwith "internal error: unelaborated `:=` reached codegen"
   | RawStmt s ->
