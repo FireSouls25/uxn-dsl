@@ -2,7 +2,7 @@
 
 open Printf
 
-let usage = "Usage: etal [options] <input.ux>\n\nOptions:\n  -o <output>    Output file (default depends on mode)\n  -t             Output Uxntal source (.tal)\n  -r             Output assembled ROM (.rom)\n  --target <t>   Bundle target: native (default) or web (single .html)\n  -v             Verbose output\n  -h             Show this help\n\nWith neither -t nor -r, etal outputs a single self-contained\nbundle: the vendored uxn vm plus the assembled ROM (native), or\na playable web page with the vendored uxn5 emulator (--target web).\nExtra native-bundle arguments are passed to the vm\n(e.g. ./game -2 for 2x zoom).\n"
+let usage = "Usage: etal [options] <input.ux>\n\nOptions:\n  -o <output>    Output file (default depends on mode)\n  -t             Output Uxntal source (.tal)\n  -r             Output assembled ROM (.rom)\n  --target <t>   Bundle target: native (default) or web (single .html)\n  --zp-report   Print zero-page usage (total + per-function) to stderr\n  -v             Verbose output\n  -h             Show this help\n\nWith neither -t nor -r, etal outputs a single self-contained\nbundle: the vendored uxn vm plus the assembled ROM (native), or\na playable web page with the vendored uxn5 emulator (--target web).\nExtra native-bundle arguments are passed to the vm\n(e.g. ./game -2 for 2x zoom).\n"
 
 (* Proposal 12: turn a `file:line:col: ...` failure into a backend-
    friendly diagnostic plus the offending source line. A Windows
@@ -47,6 +47,7 @@ let () =
     ("-t", Arg.Unit (fun () -> emit_tal := true), "Output Uxntal only");
     ("-r", Arg.Unit (fun () -> emit_rom := true), "Output ROM only");
     ("--target", Arg.String (fun s -> target := s), "Bundle target: native (default) or web");
+    ("--zp-report", Arg.Unit (fun () -> Codegen.zp_report := true), "Print zero-page usage to stderr");
     ("-v", Arg.Unit (fun () -> verbose := true), "Verbose output");
   ] in
 

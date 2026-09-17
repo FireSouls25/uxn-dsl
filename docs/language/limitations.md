@@ -107,6 +107,10 @@ not are marked **footgun**.
   asset names (`hero0`, not `face0`). Single-hex-letter-plus-digits
   (`f66`, `a1`) is also rejected as hex-looking — the compiler's
   `@fnN` function aliases use the `fn` prefix for this reason.
+- Drifblim's path buffers are `$3f` (63) bytes: assembling via a
+  long absolute input path fails with a bare `Path invalid` (its temp
+  `.tal` inherits the input dir). Build from inside the project dir
+  with a relative path instead.
 - Drifblim's symbol dictionary is fixed at `$4800` (18,432 bytes,
   ~4 bytes overhead per entry): every `@name` and `scope/sub` label
   name counts. Programs around ~700 branch labels with long function

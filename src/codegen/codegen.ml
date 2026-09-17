@@ -12,8 +12,13 @@ type var_info = {
 }
 
 type zero_item =
-  | ZVar of string * int
+  (* name, size, owning function ("" = global); the func tag feeds
+     --zp-report (and later, spillover priority). *)
+  | ZVar of string * int * string
   | ZGroup of string * int * (string * int) list
+
+(* Set by --zp-report: print total plus per-function bytes. *)
+let zp_report = ref false
 
 let rec typ_size = function
   | Ast.TypU8 -> 1
@@ -306,10 +311,10 @@ let add_local_var env name typ =
   (* Reserve once per (function, name): repeated declarations share
      the slot, as before. *)
   let already =
-    List.exists (function ZVar (n, _) -> n = mangled | _ -> false) env.zero_order
+    List.exists (function ZVar (n, _, _) -> n = mangled | _ -> false) env.zero_order
   in
   if not already then begin
-    env.zero_order <- ZVar (mangled, size) :: env.zero_order;
+    env.zero_order <- ZVar (mangled, size, env.func_name) :: env.zero_order;
     env.zp_used <- env.zp_used + size;
     if env.zp_used > 0x100 then
       failwith (Printf.sprintf "out of zero-page memory (%d bytes used)" env.zp_used);
@@ -1562,7 +1567,7 @@ let codegen_program program =
           let addr_str = sprintf "$%02x" addr_val in
           let info = { name; addr = addr_str; is_local = false; typ; size } in
           env.global_vars <- (name, info) :: env.global_vars;
-          env.zero_order <- ZVar (name, size) :: env.zero_order;
+          env.zero_order <- ZVar (name, size, "") :: env.zero_order;
           addr_str
       in
       (match init with
@@ -1598,7 +1603,7 @@ let codegen_program program =
           let addr_str = sprintf "$%02x" addr_val in
           let info = { name; addr = addr_str; is_local = false; typ; size } in
           env.global_vars <- (name, info) :: env.global_vars;
-          env.zero_order <- ZVar (name, size) :: env.zero_order;
+          env.zero_order <- ZVar (name, size, "") :: env.zero_order;
           addr_str
       in
       codegen_rhs env expr size;
@@ -1741,7 +1746,7 @@ let codegen_program program =
     Buffer.add_string buf "|00\n";
     List.iter (fun item ->
       match item with
-      | ZVar (name, size) ->
+      | ZVar (name, size, _) ->
         Buffer.add_string buf (sprintf "    @%s $%d\n" name size)
       | ZGroup (gname, base_size, fields) ->
         Buffer.add_string buf (sprintf "    @%s $%d" gname base_size);
@@ -1763,6 +1768,25 @@ let codegen_program program =
         Buffer.add_string buf (sprintf "    @%s $%d\n" info.name info.size)
     ) (List.rev env.global_vars);
     Buffer.add_string buf "\n"
+  end;
+
+  if !zp_report then begin
+    let add map (func, size) =
+      let cur = try List.assoc func map with Not_found -> 0 in
+      (func, cur + size) :: List.remove_assoc func map in
+    let by_func = List.fold_left (fun acc -> function
+      | ZVar (_, size, f) -> add acc ((if f = "" then "(globals)" else f), size)
+      | ZGroup (_, base, fields) ->
+        add acc ("(globals)",
+                 base + List.fold_left (fun a (_, s) -> a + s) 0 fields)
+    ) [] env.zero_order in
+    let ranked = List.sort (fun (_, a) (_, b) -> compare b a) by_func in
+    (* Locals budget under short aliases; show real names instead. *)
+    let real f =
+      try fst (List.find (fun (_, a) -> a = f) env.func_alias)
+      with Not_found -> f in
+    Printf.eprintf "zero-page: %d/256 bytes\n" env.zp_used;
+    List.iter (fun (f, n) -> Printf.eprintf "  %-24s %3d\n" (real f) n) ranked
   end;
 
   Buffer.add_string buf (Buffer.contents env.func_code);
