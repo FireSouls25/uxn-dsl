@@ -134,10 +134,11 @@ buffer tail[256]: u16;   ( main RAM, absolute addressed )
 grid: [64] u8;           ( small zero-page array )
 ```
 
-`buffer` reserves main-RAM space (from `0x2000` upward, sequentially)
-for anything too big for zero-page — grids, tails, tables. Small
-fixed arrays can also live in zero-page with `[N] T` globals. Both
-are read and written with identical syntax:
+`buffer` reserves main-RAM space (placed after code, assets, and
+strings; sequentially in declaration order) for anything too big for
+zero-page — grids, tails, tables. Small fixed arrays can also live in
+zero-page with `[N] T` globals. Both are read and written with
+identical syntax:
 
 ```ux
 tail[i] = nx;            ( STA/STA2 with scaled index )

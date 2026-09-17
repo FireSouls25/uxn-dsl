@@ -54,8 +54,18 @@ type codegen_env = {
      pre-pass fills both tables). *)
   mutable func_rets: (string * int) list;
   mutable func_ret: int option;
-  (* Main-RAM buffer region for `buffer` decls: base address plus
-     next free address; (name, addr, size) in allocation order. *)
+  (* Short function labels (`fn0`, `fn1`, ... in program order): the
+     emitted `@fnN` keeps drifblim's per-name symbol dictionary small
+     (it stores every `scope/sub` name; long function names repeat on
+     every branch label and overflow `$4800` on large programs). The
+     `fn` prefix (not `f`: single-hex-letter-plus-digits reads as a
+     hex literal, which drifblim rejects) keeps names valid. The real
+     name rides in the header comment (`@fn3 ( draw_pos -- )`), so the
+     .tal stays navigable. Assigned in the pre-pass below. *)
+  mutable func_alias: (string * string) list;
+  (* Buffer payload accounting: offsets are bookkeeping only, not
+     runtime addresses. The assembler places reservations after ROM
+     contents; (name, payload offset, size) in allocation order. *)
   mutable next_buffer_addr: int;
   mutable buffer_order: (string * int * int) list;
   (* Data/asset blob names: registered in global_vars for address
@@ -68,8 +78,9 @@ type codegen_env = {
   mutable zp_used: int;
 }
 
-(* Buffers live in main RAM, clear of code/data (loaded at 0x100). *)
-let buffer_region_base = 0x2000
+(* Actual addresses are assigned by the assembler after code/data.
+   This counter measures buffer payload only. *)
+let buffer_region_base = 0
 
 let create_env () = {
   global_vars = [];
@@ -92,6 +103,7 @@ let create_env () = {
   func_sigs = [];
   func_rets = [];
   func_ret = None;
+  func_alias = [];
   next_buffer_addr = buffer_region_base;
   buffer_order = [];
   data_order = [];
@@ -221,6 +233,14 @@ let get_var_info env name =
     try List.assoc name env.global_vars
     with Not_found -> raise Not_found
 
+(* Emitted label of a function: its short alias when assigned, else
+   the name itself (unknown callees keep the legacy `;name`, which
+   fails loudly at assembly as before). Data/buffer/blob names are
+   never aliased — only FuncDecl names enter the table. *)
+let fal env name =
+  try List.assoc name env.func_alias
+  with Not_found -> name
+
 let get_var_addr env name =
   try
     let info = List.assoc name env.local_vars in
@@ -245,6 +265,13 @@ let make_string_label env s =
 
 let local_counter = ref 0
 
+(* Branch scaffolding labels use two-letter stems (it/ie/ix/et/ee/
+   wl/wc/wx/fr/fc/fx/fv/ak/al/pt, always with the per-function
+   counter suffix). Drifblim keeps every scoped label name in a
+   ~15KB dictionary, so descriptive stems overflow it on large
+   programs (chess hit "Symbols exceeded" at ~16KB). The stems are
+   reserved: user `label` names colliding with them in the same
+   function fail assembly — pick anything else. *)
 let new_local_label env prefix =
   incr local_counter;
   sprintf "%s_%d" prefix !local_counter
@@ -574,7 +601,7 @@ let rec codegen_expr env expr =
           (* Inline NUL-terminated string printer:
              ;str &loop LDAk .Console/write DEO INC2 LDAk ?&loop POP2 *)
           let label = make_string_label env s in
-          let loop = new_local_label env "print" in
+          let loop = new_local_label env "pt" in
           emit env ";%s &%s LDAk .Console/write DEO INC2 LDAk ?&%s POP2"
             label loop loop
         | _ ->
@@ -582,7 +609,7 @@ let rec codegen_expr env expr =
              falls through to a (likely undefined) JSR. *)
           emit env ";print JSR2")
       | Ident (name, _) ->
-        emit env ";%s JSR2" name
+        emit env ";%s JSR2" (fal env name)
       | _ -> failwith "Invalid function expression")
     end
   | Index (arr, index) when (match arr with Ast.Ident _ -> false | _ -> composite_involves_struct env arr) ->
@@ -651,7 +678,9 @@ let rec codegen_expr env expr =
     | _ ->
       codegen_expr env expr)
   | AddrOf (name, _) ->
-    emit env ";%s" name
+    (* Function vectors alias; data/blob addresses keep their names
+       (only FuncDecl names enter the alias table). *)
+    emit env ";%s" (fal env name)
   | RawLit s ->
     emit env "%s" s
   | Assign (left, right) when is_whole_copy env left right ->
@@ -947,9 +976,9 @@ let rec codegen_stmt env stmt =  match stmt with
     | None -> codegen_expr env expr);
     emit env " JMP2r\n"
   | If (condition, then_body, elifs, else_body) ->
-    let then_label = new_local_label env "if_then" in
-    let else_label = new_local_label env "if_else" in
-    let end_label = new_local_label env "if_end" in
+    let then_label = new_local_label env "it" in
+    let else_label = new_local_label env "ie" in
+    let end_label = new_local_label env "ix" in
 
     codegen_cond env condition;
     emit env " ?&%s\n" then_label;
@@ -963,8 +992,8 @@ let rec codegen_stmt env stmt =  match stmt with
       emit env " !&%s\n" end_label;
       emit env "&%s\n" else_label;
       List.iter (fun (cond, body) ->
-        let elif_then = new_local_label env "elif_then" in
-        let elif_else = new_local_label env "elif_else" in
+        let elif_then = new_local_label env "et" in
+        let elif_else = new_local_label env "ee" in
         codegen_cond env cond;
         emit env " ?&%s\n" elif_then;
         emit env " !&%s\n" elif_else;
@@ -980,9 +1009,9 @@ let rec codegen_stmt env stmt =  match stmt with
       emit env "&%s\n" end_label
     end
   | While (condition, body) ->
-    let loop_label = new_local_label env "while" in
-    let cont_label = new_local_label env "while_cont" in
-    let end_label = new_local_label env "while_end" in
+    let loop_label = new_local_label env "wl" in
+    let cont_label = new_local_label env "wc" in
+    let end_label = new_local_label env "wx" in
     (* while(cond){body} ->
        &loop <cond> ?&cont !&end &cont <body> !&loop &end
        (JCI pops bool; true -> body, false -> end) *)
@@ -1008,15 +1037,15 @@ let rec codegen_stmt env stmt =  match stmt with
     let end_load =
       match end_expr with
       | IntLit _ | Ident _ ->
-        let tmp = add_local_var env (new_local_label env "for_end") Ast.TypU16 in
+        let tmp = add_local_var env (new_local_label env "fv") Ast.TypU16 in
         codegen_rhs env end_expr 2;
         emit env " .%s STZ2\n" tmp;
         (fun () -> emit env ".%s LDZ2" tmp)
       | _ -> (fun () -> codegen_rhs env end_expr 2)
     in
-    let loop_label = new_local_label env "for" in
-    let cont_label = new_local_label env "for_cont" in
-    let end_label = new_local_label env "for_end" in
+    let loop_label = new_local_label env "fr" in
+    let cont_label = new_local_label env "fc" in
+    let end_label = new_local_label env "fx" in
     (* for i in start..end == while(i < end) { body; i++ } *)
     emit env "&%s\n" loop_label;
     emit env ".%s LDZ2 " addr;
@@ -1108,8 +1137,8 @@ let rec codegen_stmt env stmt =  match stmt with
     (* Proposal 11: total the condition; on false print the baked
        location and halt. A failing assert aborts to the emulator
        (BRK), even inside a plain fn — that is the point. *)
-    let ok_label = new_local_label env "assert_ok" in
-    let loop_label = new_local_label env "assert" in
+    let ok_label = new_local_label env "ak" in
+    let loop_label = new_local_label env "al" in
     let label = make_string_label env (Printf.sprintf "assert failed at %s\n" loc) in
     codegen_cond env expr;
     emit env " ?&%s\n" ok_label;
@@ -1174,8 +1203,9 @@ let rec codegen_stmt env stmt =  match stmt with
     emit env "%s\n" s
 
 let codegen_func env (fn_def : Ast.func) =
-  Buffer.add_string env.code (sprintf "\n@%s ( -- )\n" fn_def.name);
-  start_func env fn_def.name;
+  let alias = fal env fn_def.name in
+  Buffer.add_string env.code (sprintf "\n@%s ( %s -- )\n" alias fn_def.name);
+  start_func env alias;
   env.in_event <- fn_def.is_event;
   (* Size `return expr` to the declared width so callers read exactly
      what the signature promises (byte callees compose). *)
@@ -1321,13 +1351,31 @@ let codegen_program program =
   (* Proposal 9: record every signature up front so forward calls get
      argument promotion too — the checker pre-pass makes them valid,
      this makes them correctly sized. Return widths make call results
-     composable (a `-> u8` callee leaves one byte, not two). *)
+     composable (a `-> u8` callee leaves one byte, not two). Short
+     labels are assigned in the same sweep (see func_alias). *)
   List.iter (function
     | FuncDecl f ->
       env.func_sigs <- (f.name, List.map (fun (p: Ast.param) -> resolve_size env p.typ) f.params) :: env.func_sigs;
       (match f.return_typ with
       | Some t -> env.func_rets <- (f.name, resolve_size env t) :: env.func_rets
-      | None -> ())
+      | None -> ());
+      (* Short label `fnN`, skipping any N whose name a non-function
+         decl already owns (a data blob named `fn3` must keep it) or a
+         previous alias took — the loader rejects true duplicates,
+         this only dodges the alias pattern itself. *)
+      let taken a =
+        List.exists (fun d ->
+            match Ast.decl_name d with
+            | Some (_, n) -> n = a
+            | None -> false) program
+        || List.exists (fun (_, b) -> b = a) env.func_alias
+      in
+      let rec free k =
+        let a = sprintf "fn%d" k in
+        if taken a then free (k + 1) else a
+      in
+      let alias = free (List.length env.func_alias) in
+      env.func_alias <- env.func_alias @ [(f.name, alias)]
     | _ -> ()) program;
 
   List.iter (fun decl ->
@@ -1523,7 +1571,7 @@ let codegen_program program =
     Buffer.add_string env.data
       (sprintf "@etal_meta [ 00 %s0a %s00 $2 ]\n" (hex_of title) (hex_of author));
     Buffer.add_string env.entry_code ";etal_meta .System/metadata DEO2\n");
-  Buffer.add_string env.entry_code ";main JSR2\n";
+  Buffer.add_string env.entry_code (sprintf ";%s JSR2\n" (fal env "main"));
   Buffer.add_string env.entry_code "HALT\n";
   Buffer.add_string env.entry_code "BRK\n\n";
 
@@ -1566,19 +1614,22 @@ let codegen_program program =
   Buffer.add_string buf "\n";
   Buffer.add_string buf (Buffer.contents env.data);
 
-  (* Main-RAM buffers at absolute addresses. *)
-  if List.length env.buffer_order > 0 then begin
-    Buffer.add_string buf "\n";
-    List.iter (fun (name, addr, total) ->
-      Buffer.add_string buf (sprintf "|%04x @%s $%d\n" addr name total)
-    ) env.buffer_order;
-  end;
-
   if List.length env.strings > 0 then begin
     Buffer.add_string buf "\n";
     List.iter (fun (label, s) ->
       Buffer.add_string buf (sprintf "@%s %s\n" label (encode_string s))
     ) env.strings
+  end;
+
+  (* Reserve writable buffers AFTER all emitted bytes. Fixed origins
+     could move the assembler backwards into code (chess exceeds 8KB).
+     References already use labels, so the assembler resolves their
+     final addresses. Reservation sizes, like all TAL numbers, are hex. *)
+  if List.length env.buffer_order > 0 then begin
+    Buffer.add_string buf "\n";
+    List.iter (fun (name, _, total) ->
+      Buffer.add_string buf (sprintf "@%s $%x\n" name total)
+    ) env.buffer_order;
   end;
 
   Buffer.contents buf

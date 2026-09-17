@@ -13,7 +13,7 @@ print("Hello, World!\n");
 Prints a NUL-terminated string to the console, one `DEO` per byte:
 
 ```tal
-;str_0 &print_1 LDAk .Console/write DEO INC2 LDAk ?&print_1 POP2
+;str_0 &pt_1 LDAk .Console/write DEO INC2 LDAk ?&pt_1 POP2
 ```
 
 - Argument must be a **string literal**. Any other argument falls

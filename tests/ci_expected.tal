@@ -1,24 +1,24 @@
 |00
-    @double__x $2
+    @fn0__x $2
     @grid_pos $2
     @pair0 $5
     @pair1 $5
     @grid_a $4
     @grid_b $4
     @baddr $2
-    @main__m $2
-    @main__d $2
-    @main__total $2
-    @main__K $2
-    @main__CAP $2
-    @main__i $2
-    @main__for_end_1 $2
-    @main__step $1
-    @main__w $2
-    @main__ok $1
-    @main__ng $1
-    @main____match_2 $2
-    @late__x $2
+    @fn1__m $2
+    @fn1__d $2
+    @fn1__total $2
+    @fn1__K $2
+    @fn1__CAP $2
+    @fn1__i $2
+    @fn1__fv_1 $2
+    @fn1__step $1
+    @fn1__w $2
+    @fn1__ok $1
+    @fn1__ng $1
+    @fn1____match_2 $2
+    @fn2__x $2
 
 %RTN { JMP2r }
 %EMIT { #18 DEO }
@@ -36,84 +36,84 @@
 #000f #0010 DIV2k MUL2 SUB2 .grid_pos STZ2
 ;blip .baddr STZ2
 ;etal_meta .System/metadata DEO2
-;main JSR2
+;fn1 JSR2
 HALT
 BRK
 
 
 
-@double ( -- )
-    .double__x STZ2
-.double__x LDZ2 .double__x LDZ2 ADD2 JMP2r
+@fn0 ( double -- )
+    .fn0__x STZ2
+.fn0__x LDZ2 .fn0__x LDZ2 ADD2 JMP2r
 JMP2r
 
-@main ( -- )
-#0011 #0011 #0005 DIV2 #0005 MUL2 SUB2 .main__m STZ2
-;ten ;double JSR2 .main__d STZ2
+@fn1 ( main -- )
+#0011 #0011 #0005 DIV2 #0005 MUL2 SUB2 .fn1__m STZ2
+;ten ;fn0 JSR2 .fn1__d STZ2
 #0041 ;cells #0000 #0002 MUL2 ADD2 STA2
 #0042 ;cells #0001 #0002 MUL2 ADD2 STA2
-.main__m LDZ2 .main__d LDZ2 ADD2 .main__total STZ2
-#0004 .main__K STZ2
-#000a .main__CAP STZ2
-#0000 .main__i STZ2
-#0002 .main__for_end_1 STZ2
-&for_2
-.main__i LDZ2 .main__for_end_1 LDZ2 LTH2 ?&for_cont_3
- !&for_end_4
-&for_cont_3
-#0030 .main__i LDZ2 ADD2 ;cells .main__i LDZ2 #0002 ADD2 #0002 MUL2 ADD2 STA2
-.main__i LDZ2 INC2 .main__i STZ2
- !&for_2
-&for_end_4
-&while_5
-.main__total LDZ2 .main__CAP LDZ2 GTH2 ?&while_cont_6
- !&while_end_7
-&while_cont_6
-.main__total LDZ2 #0001 SUB2 .main__total STZ2
- !&while_5
-&while_end_7
-#03 .main__step STZ
-.grid_pos LDZ2 .main__step LDZ #00 SWP ADD2 #0010 DIV2k MUL2 SUB2 .grid_pos STZ2
+.fn1__m LDZ2 .fn1__d LDZ2 ADD2 .fn1__total STZ2
+#0004 .fn1__K STZ2
+#000a .fn1__CAP STZ2
+#0000 .fn1__i STZ2
+#0002 .fn1__fv_1 STZ2
+&fr_2
+.fn1__i LDZ2 .fn1__fv_1 LDZ2 LTH2 ?&fc_3
+ !&fx_4
+&fc_3
+#0030 .fn1__i LDZ2 ADD2 ;cells .fn1__i LDZ2 #0002 ADD2 #0002 MUL2 ADD2 STA2
+.fn1__i LDZ2 INC2 .fn1__i STZ2
+ !&fr_2
+&fx_4
+&wl_5
+.fn1__total LDZ2 .fn1__CAP LDZ2 GTH2 ?&wc_6
+ !&wx_7
+&wc_6
+.fn1__total LDZ2 #0001 SUB2 .fn1__total STZ2
+ !&wl_5
+&wx_7
+#03 .fn1__step STZ
+.grid_pos LDZ2 .fn1__step LDZ #00 SWP ADD2 #0010 DIV2k MUL2 SUB2 .grid_pos STZ2
 .grid_pos LDZ2 #0014 SUB2 #0010 DIV2k MUL2 SUB2 .grid_pos STZ2
-#0007 #0008 DIV2k MUL2 SUB2 .main__w STZ2
-.main__w LDZ2 #0003 ADD2 #0008 DIV2k MUL2 SUB2 .main__w STZ2
+#0007 #0008 DIV2k MUL2 SUB2 .fn1__w STZ2
+.fn1__w LDZ2 #0003 ADD2 #0008 DIV2k MUL2 SUB2 .fn1__w STZ2
 #03 ;pts #0000 #0002 MUL2 ADD2 STA
 #04 ;pts #0001 #0002 MUL2 ADD2 #0001 ADD2 STA
-#00 .main__ok STZ
-.main__w LDZ2 #0002 GTH2 #00 EQU ?&if_then_8
- !&if_end_10
-&if_then_8
-#01 .main__ok STZ
-&if_end_10
-.main__w LDZ2 #0002 LTH2 #00 EQU ?&if_then_11
- !&if_end_13
-&if_then_11
-.main__ok LDZ #00 SWP #0002 ADD2 NIP .main__ok STZ
-&if_end_13
-#03 .main__ng STZ
-.main__m LDZ2 .main____match_2 STZ2
-.main____match_2 LDZ2 #0000 EQU2 ?&if_then_14
- !&if_else_15
-&if_then_14
+#00 .fn1__ok STZ
+.fn1__w LDZ2 #0002 GTH2 #00 EQU ?&it_8
+ !&ix_10
+&it_8
+#01 .fn1__ok STZ
+&ix_10
+.fn1__w LDZ2 #0002 LTH2 #00 EQU ?&it_11
+ !&ix_13
+&it_11
+.fn1__ok LDZ #00 SWP #0002 ADD2 NIP .fn1__ok STZ
+&ix_13
+#03 .fn1__ng STZ
+.fn1__m LDZ2 .fn1____match_2 STZ2
+.fn1____match_2 LDZ2 #0000 EQU2 ?&it_14
+ !&ie_15
+&it_14
 #41 .Console/write DEO
- !&if_end_16
-&if_else_15
-.main____match_2 LDZ2 #0002 EQU2 ?&elif_then_17
- !&elif_else_18
-&elif_then_17
+ !&ix_16
+&ie_15
+.fn1____match_2 LDZ2 #0002 EQU2 ?&et_17
+ !&ee_18
+&et_17
 #42 .Console/write DEO
- !&if_end_16
-&elif_else_18
+ !&ix_16
+&ee_18
 #43 .Console/write DEO
-&if_end_16
-;str_0 &print_19 LDAk .Console/write DEO INC2 LDAk ?&print_19 POP2
-#0030 .main__m LDZ2 ADD2 NIP .Console/write DEO
+&ix_16
+;str_0 &pt_19 LDAk .Console/write DEO INC2 LDAk ?&pt_19 POP2
+#0030 .fn1__m LDZ2 ADD2 NIP .Console/write DEO
 #0030 .grid_pos LDZ2 ADD2 NIP .Console/write DEO
-#0030 .main__w LDZ2 ADD2 NIP .Console/write DEO
+#0030 .fn1__w LDZ2 ADD2 NIP .Console/write DEO
 #0030 ;pts #0000 #0002 MUL2 ADD2 LDA #00 SWP ADD2 ;pts #0001 #0002 MUL2 ADD2 #0001 ADD2 LDA #00 SWP ADD2 NIP .Console/write DEO
-#0030 #0001 ;late JSR2 ADD2 NIP .Console/write DEO
-#0030 .main__ok LDZ #00 SWP ADD2 NIP .Console/write DEO
-#0030 .main__ng LDZ #00 SWP SUB #00 SWP ADD2 NIP .Console/write DEO
+#0030 #0001 ;fn2 JSR2 ADD2 NIP .Console/write DEO
+#0030 .fn1__ok LDZ #00 SWP ADD2 NIP .Console/write DEO
+#0030 .fn1__ng LDZ #00 SWP SUB #00 SWP ADD2 NIP .Console/write DEO
 #0030 .baddr LDZ2 ADD2 ;blip SUB2 NIP .Console/write DEO
 #01 ;pair0 STA
 #02 ;pair0 #0001 ADD2 STA
@@ -133,16 +133,16 @@ JMP2r
 ;blip #0008 ADD2 LDA .Console/write DEO
 JMP2r
 
-@late ( -- )
-    .late__x STZ2
-.late__x LDZ2 #0001 ADD2 JMP2r
+@fn2 ( late -- )
+    .fn2__x STZ2
+.fn2__x LDZ2 #0001 ADD2 JMP2r
 JMP2r
 
 @blip [ 00 00 00 00 00 00 00 00 ff ff ff ff ff ff ff ff ]
 @etal_meta [ 00 63 69 0a 65 74 61 6c 00 $2 ]
 
-|2000 @cells $16
-|2010 @pts $4
-
 @str_0 "c "i "- "o "k \n \0
 @str_1 "A "B \0
+
+@cells $10
+@pts $4

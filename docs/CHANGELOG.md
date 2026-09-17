@@ -94,3 +94,15 @@ only); string literals index with byte stride; `lib/string.ux`
 (self-built turns256 sine table) and `gfx3d.ux` (rotate/project/DDA
 wireframe) with a spinning-cube demo. Dead-function elimination
 (reachable-from-main, raw disables) so libraries don't eat zero-page.
+Address decay (bare arrays and `&name` flow into pointer slots),
+exact checker lines via leaf positions, and zero-page-sized branch
+scaffolding: two-letter label stems plus short `@fnN` function labels
+(real name in the header comment) so large programs fit drifblim's
+fixed `$4800` symbol dictionary (chess needed it at ~20KB of names).
+Font-bis: the `(`/`)` glyph comments nested the lexer comment and ate a
+whole font row (`CHESS` rendered as `DIFTT`) — glyph names are words now
+(`lparen`/`rparen`, lexical doc footgun note), and `test_font` asserts
+blob content, not just address math. Input-bis: `Controller.key` polling
+can't work (the VM self-clears the port between frames) — chess latches
+keys/buttons in `on_key`/`on_mouse` vectors; mouse coords are window
+pixels (zoom ≠ 1 miscalibrates, upstream quirk), both noted in limitations.

@@ -11,3 +11,7 @@
 (test
  (name test_loader)
  (libraries etal_loader))
+
+(test
+ (name test_buffer_layout)
+ (libraries etal_codegen etal_parser etal_lexer))
