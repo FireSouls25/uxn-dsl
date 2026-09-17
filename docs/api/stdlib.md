@@ -47,6 +47,14 @@ playing) over a shared frame table: `anim_play` (looping),
 frame and stops, ping-pong bounces), `anim_stop/start/playing`,
 `anim_step` (stopped rows freeze with the tile untouched).
 
+## lerp.ux
+
+`lerp8(a, b, k, n)` walks byte `a` to byte `b` as `k` runs `0..n`:
+`(a*(n-k) + b*k)/n`, total for all `u8` inputs (the numerator tops
+out at `255*n`, always inside `u16` — no wrap, no sign discipline,
+either direction). Frame counters and pixel slides; wider ranges
+want `fix16`. Preconditions: `n >= 1`, `0 <= k <= n`.
+
 ## collide.ux, scene.ux, menu.ux, mouse.ux, mouse.ux
 
 `layers_hit` (same layer and at least one solid — edible food,

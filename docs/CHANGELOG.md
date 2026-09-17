@@ -125,7 +125,7 @@ only ended one frame.
 Phase-1 diagnostics from the chess session: calls into `event`
 vectors are compile errors (only `main` exempt; gated by
 `check_fail`), bare valued calls warn with `_ = expr;` as the
-explicit-discard idiom (new `Drop` node end to end), and comments
+explicit-discard idiom (new and comments
 holding whitespace-only inner parens warn at lex time (the exact
 `( ( )` trap, gated in `test_warn.ux`).
 Signed `i8`/`i16`: two's complement at the existing widths, strict
@@ -134,3 +134,5 @@ literals adapt, signed `/`/`%` rejected), sign-flip comparisons and
 sign-extending promotion in codegen; gated by `test_signed.ux` (17
 bytes incl. the `0xff` sign-extension proof) plus four `check_fail`
 lattice locks.
+`lib/lerp.ux` (`lerp8`, total for all `u8` inputs, gated by
+`test_lerp.ux`) for slides/fades without hand-rolled promotion.
