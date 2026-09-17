@@ -113,3 +113,8 @@ latched controller-button edge mask (`cbtnbuf`, taps can't fall
 between frames). Headless-harness proven: cursor follows the mouse,
 arrows + Enter leave the menu, S + Space start as Black, ESC
 pauses/resumes with stable stacks.
+Chess material counter is sign + two digits (`mat_show`, gated by
+`test_material.ux`): a single `48+d` digit showed `:`/`<` past a
+9-point gap. The bot's reply glides over 10 frames (buffer-resident
+lerp, zero zero-page cost; castling slides only the king), and
+`docs/examples/chess.md` covers rules/bot/UI notes.

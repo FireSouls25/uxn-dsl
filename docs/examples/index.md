@@ -57,6 +57,8 @@ suite diffs byte-for-byte.
 
 ## More examples
 
+- [Chess](chess.md) — `examples/chess/`: menu/color/board/pause/over
+  scenes, mouse drag + keyboard menus, and a greedy 1-ply bot.
 - [Megalovania audio demo](megalo.md) — `examples/megalo/`: a
   20-note sequenced loop plus a `.wav` blip, with run and ear-check
   instructions.
