@@ -10,6 +10,13 @@ open Token
 type typ =
   | TypU8
   | TypU16
+  (* Signed two's complement, same widths as the unsigned pair.
+     `+ - *`, unary `-`/`~` and `==`/`!=` are bitwise-identical;
+     ordered comparisons lower via sign-flip; `/` and `%` are rejected
+     (Uxn divides unsigned). Literals stay unsigned — negativity comes
+     from unary minus directly on a literal (`-5` is `i8`). *)
+  | TypI8
+  | TypI16
   | TypBool
   | TypVoid
   | TypArray of typ * int

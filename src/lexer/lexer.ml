@@ -266,6 +266,8 @@ let keyword_or_ident s =
   | "brk" -> BRK
   | "u8" -> U8
   | "u16" -> U16
+  | "i8" -> I8
+  | "i16" -> I16
   | "bool" -> BOOL
   | "byte" -> BYTE
   | "short" -> SHORT

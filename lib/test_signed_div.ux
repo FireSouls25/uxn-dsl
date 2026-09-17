@@ -1,0 +1,7 @@
+( negative probe: Uxn divides unsigned, so signed / and % fail loudly. )
+a: i8 = -7;
+b: i8 = 2;
+main :: fn() {
+    q: i8 = a / b;
+    varvara.console.write(q);
+}

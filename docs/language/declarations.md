@@ -78,6 +78,31 @@ WIDTH :: 20;            ( inferred type, constant: address IS the value )
   zero cost. Only integer and identifier initializers carry real
   values this way.
 
+## Signed integers (`i8`, `i16`)
+
+Two's complement, same widths as the unsigned pair. `+ - *`, unary
+`-`/`~` and `==`/`!=` are bitwise-identical and just work; ordered
+comparisons (`<`, `>`, `<=`, `>=`) flip the sign bit and compare
+unsigned. `/` and `%` on signed values are compile errors — Uxn
+divides unsigned, so negatives would miscompile; branch on the sign
+first.
+
+```ux
+dx: i8 = -5;            ( negativity comes from unary minus on a literal )
+n: i8 = 5;              ( fitting positive literals work too )
+if dx < 0 { ... }       ( literals compare freely; mixed vars don't )
+w: i16 = dx;            ( widening sign-extends )
+u: u8 = dx & 255;       ( same-width bits reinterpret as unsigned )
+m: u8 mod 128 = v;      ( then k: i8 = m proves a value fits )
+```
+
+Rules of thumb: same sign widens (`i8 + i16` is `i16`); same-width
+cross-sign reinterprets as unsigned for bitwise ops only (shifts stay
+logical); everything else cross-sign is an error naming the bridge.
+`for` bounds, indices and `mod` bases stay unsigned. Returns and
+device ports are bit-exact, so a negative stored short keeps its low
+byte (ports take the bit pattern).
+
 Convention (not enforced): `::` constants are `ALL_CAPS`, like the
 `WIDTH` above; variables are `snake_case`. Locals use the same four
 forms inside functions.

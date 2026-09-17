@@ -61,6 +61,8 @@ type token =
   (* Types *)
   | U8
   | U16
+  | I8
+  | I16
   | BOOL
   | BYTE
   | SHORT
@@ -155,6 +157,8 @@ let token_to_string = function
   | BRK -> "brk"
   | U8 -> "u8"
   | U16 -> "u16"
+  | I8 -> "i8"
+  | I16 -> "i16"
   | BOOL -> "bool"
   | BYTE -> "byte"
   | SHORT -> "short"

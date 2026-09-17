@@ -137,6 +137,26 @@ let mod_modulus = function
   | TypMod (_, m) -> Some m
   | _ -> None
 
+(* Signedness through mod wrappers (mods never wrap signed — the
+   parser rejects those bases — so a direct match decides). *)
+let is_signed = function
+  | TypI8 | TypI16 -> true
+  | _ -> false
+
+(* Integer literals fit any slot whose range holds the value. This is
+   what makes `x: i8 = 5` work while `x: i8 = some_u8` stays an error
+   (and changes nothing for unsigned: a fitting literal already types
+   compatibly there). Applied at every value-flow site. *)
+let literal_fits dst = function
+  | IntLit (n, _) ->
+    (match dst with
+     | TypU8 -> n >= 0 && n <= 255
+     | TypU16 -> n >= 0 && n <= 65535
+     | TypI8 -> n >= 0 && n <= 127
+     | TypI16 -> n >= 0 && n <= 32767
+     | _ -> false)
+  | _ -> false
+
 let add_struct env name fields =
   env.structs <- (name, fields) :: env.structs
 
@@ -224,9 +244,19 @@ let rec assign_compat dst src =
   else if dst = src then true
   else match dst, src with
   | TypU16, TypU8 -> true
+  (* Widening into signed is zero-extended, always sound. Anything
+     narrowing or sign-changing needs an explicit bridge (`& 255`
+     reinterprets same-width bits, `u8 mod 128` proves a value fits) —
+     literals that fit are handled by literal_fits at each site. *)
+  | TypI16, TypU8 -> true
+  | TypI16, TypI8 -> true
   | TypU16, TypMod _ -> true
   | TypU8, TypMod (TypU8, _) -> true
   | TypU8, TypMod (TypU16, m) -> m <= 256
+  | TypI8, TypMod (TypU8, m) -> m <= 128
+  | TypI8, TypMod (TypU16, m) -> m <= 128
+  | TypI16, TypMod (TypU16, m) -> m <= 32768
+  | TypI16, TypMod (TypU8, _) -> true
   | TypMod (b, m), TypMod (b2, m2) ->
     m = m2 && (b2 = b || (b2 = TypU8 && b = TypU16))
   | TypMod (b, _), s ->
@@ -246,12 +276,21 @@ let decays_to_pointer dst src = function
     (match dst, src with
      | TypPointer TypU8, TypArray (e, _) -> e = TypU8 || e = TypBool
      | TypPointer TypU16, TypArray (TypU16, _) -> true
+     | TypPointer TypI8, TypArray (TypI8, _) -> true
+     | TypPointer TypI16, TypArray (TypI16, _) -> true
      | _ -> false)
 
 (* Result of `+ - * / %`: same modulus preserves the bound (width
    widens), mixed moduli are a type error, mixing with plain coerces
-   to plain — the result is no longer bounded. *)
-let arith_result l r =
+   to plain — the result is no longer bounded. Same-sign widens like
+   the unsigned pair; cross-sign needs an explicit reinterpret first.
+   Signed `/` and `%` are rejected outright: Uxn divides unsigned, so
+   negatives would miscompile — branch on the sign first. *)
+let arith_result op l r =
+  (match op with
+   | Div | Mod when is_signed (mod_base l) || is_signed (mod_base r) ->
+     failwith "signed `/` and `%` are not supported (Uxn divides unsigned — branch on the sign first)"
+   | _ -> ());
   match mod_modulus l, mod_modulus r with
   | Some m1, Some m2 when m1 = m2 ->
     let b =
@@ -266,14 +305,20 @@ let arith_result l r =
     | TypU16, TypU16 -> TypU16
     | TypU8, TypU16 -> TypU16
     | TypU16, TypU8 -> TypU16
-    | _ -> failwith "Invalid operands for arithmetic operation")
+    | TypI8, TypI8 -> TypI8
+    | TypI16, TypI16 -> TypI16
+    | TypI8, TypI16 | TypI16, TypI8 -> TypI16
+    | _ -> failwith "mixed-sign arithmetic needs an explicit reinterpret first (`& 255` keeps same-width bits, `u8 mod 128` proves a value fits)")
   | None, None ->
     (match l, r with
     | TypU8, TypU8 -> TypU8
     | TypU16, TypU16 -> TypU16
     | TypU8, TypU16 -> TypU16
     | TypU16, TypU8 -> TypU16
-    | _ -> failwith "Invalid operands for arithmetic operation")
+    | TypI8, TypI8 -> TypI8
+    | TypI16, TypI16 -> TypI16
+    | TypI8, TypI16 | TypI16, TypI8 -> TypI16
+    | _ -> failwith "mixed-sign arithmetic needs an explicit reinterpret first (`& 255` keeps same-width bits, `u8 mod 128` proves a value fits)")
 
 let rec lookup_func env name =
   try Some (List.assoc name env.funcs)
@@ -331,21 +376,58 @@ let rec type_of_expr env expr =
     let left_typ = type_of_expr env left in
     let right_typ = type_of_expr env right in
     (match op with
-    | Add | Sub | Mul | Div | Mod -> arith_result left_typ right_typ
+    | Add | Sub | Mul | Div | Mod ->
+      (* Integer literals adapt to the other side when they fit it, so
+         `i + 1` and `n * 2` just work; anything bigger keeps its
+         unsigned type and the normal rules reject genuine mixing. *)
+      let adapts t n = match t with
+        | TypI8 -> n >= 0 && n <= 127
+        | TypI16 -> n >= 0 && n <= 32767
+        | TypU8 -> n >= 0 && n <= 255
+        | TypU16 -> n >= 0 && n <= 65535
+        | _ -> false in
+      let lt = match left with
+        | IntLit (n, _) when adapts right_typ n -> right_typ | _ -> left_typ
+      and rt = match right with
+        | IntLit (n, _) when adapts left_typ n -> left_typ | _ -> right_typ in
+      arith_result op lt rt
     | And | Or | Xor | Lshift | Rshift ->
       (* Conservative: bitwise results are no longer bounded, so mods
-         decay to their plain base here (comparisons still yield bool). *)
+         decay to their plain base here (comparisons still yield bool).
+         Bitwise ops are sign-agnostic: same-sign widens, same-width
+         cross-sign reinterprets as unsigned (shifts stay logical). *)
       (match mod_base left_typ, mod_base right_typ with
       | TypU8, TypU8 -> TypU8
       | TypU16, TypU16 -> TypU16
       | TypU8, TypU16 -> TypU16
       | TypU16, TypU8 -> TypU16
+      | TypI8, TypI8 -> TypI8
+      | TypI16, TypI16 -> TypI16
+      | TypI8, TypI16 | TypI16, TypI8 -> TypI16
+      | TypU8, TypI8 | TypI8, TypU8 -> TypU8
+      | TypU16, TypI16 | TypI16, TypU16 -> TypU16
+      | TypU8, TypI16 | TypI16, TypU8 -> TypU16
+      | TypI8, TypU16 | TypU16, TypI8 -> TypU16
       | _ -> failwith "Invalid operands for bitwise operation")
     | Eq | Neq | Lt | Gt | Le | Ge ->
       if contains_struct left_typ || contains_struct right_typ then
         failwith "cannot compare structs (compare fields)";
       if is_array_value left_typ || is_array_value right_typ then
         failwith "cannot compare whole arrays (compare elements)";
+      (* Ordered comparison is meaningless across signs (255 vs -1
+         would read equal bitwise); equality is bitwise and stays
+         permissive. Literals are exempt — they fit by value and the
+         generator folds them correctly (`i < 10` is the common case). *)
+      (match op with
+       | Lt | Gt | Le | Ge ->
+         (match left, right with
+          | IntLit _, _ | _, IntLit _ -> ()
+          | _ ->
+            let sl = is_signed (mod_base left_typ)
+            and sr = is_signed (mod_base right_typ) in
+            if sl <> sr then
+              failwith "cannot compare signed with unsigned (reinterpret one side first)");
+       | _ -> ());
       TypBool
     | AndAnd | OrOr ->
       if is_array_value left_typ || is_array_value right_typ then
@@ -359,7 +441,13 @@ let rec type_of_expr env expr =
     reject_struct_value "unary operator" expr_typ;
     reject_array_value "unary operator" expr_typ;
     (match op with
-    | Neg -> mod_base expr_typ
+    | Neg ->
+      (match expr with
+       (* Negativity comes from unary minus directly on a literal:
+          `-5` is i8, `-300` is i16. Anything wider keeps wrapping. *)
+       | IntLit (n, _) when n >= 1 && n <= 128 -> TypI8
+       | IntLit (n, _) when n >= 129 && n <= 32768 -> TypI16
+       | _ -> mod_base expr_typ)
     | NotBit -> mod_base expr_typ
     | Not -> TypBool)
   | Call (func_expr, args) ->
@@ -389,7 +477,7 @@ let rec type_of_expr env expr =
           if is_array_value arg_typ && not (decays_to_pointer param.typ arg_typ arg) then
             failwith (Printf.sprintf "array argument `%s` of function `%s` needs a matching pointer parameter (index an element)"
               param.name name);
-          if not (assign_compat param.typ arg_typ || decays_to_pointer param.typ arg_typ arg) then
+          if not (assign_compat param.typ arg_typ || literal_fits param.typ arg || decays_to_pointer param.typ arg_typ arg) then
             failwith (Printf.sprintf "Type mismatch for argument %s of function %s"
               param.name name)
         ) params args;
@@ -516,6 +604,7 @@ let rec type_of_expr env expr =
        if is_array_value left_typ || is_array_value right_typ then
          failwith "cannot assign arrays of different element type or length (same arrays copy with `=`)";
        if right_typ = TypVoid || assign_compat left_typ right_typ ||
+          literal_fits left_typ right ||
           (match left with Field _ -> true | _ -> false) then
          left_typ
        else
@@ -596,7 +685,7 @@ let rec type_check_stmt env stmt =
     (* Proposal 11: truthiness like If — the message carries the
        baked location, so no position is needed here. *)
     let cond_typ = type_of_expr env expr in
-    if cond_typ <> TypBool && cond_typ <> TypU8 && cond_typ <> TypU16 then
+    if cond_typ <> TypBool && cond_typ <> TypU8 && cond_typ <> TypU16 && cond_typ <> TypI8 && cond_typ <> TypI16 then
       failwith "assert condition must be boolean";
   | RPop -> ()
   | RPeek -> ()
@@ -613,13 +702,13 @@ let rec type_check_stmt env stmt =
   | RawStmt _ -> ()
   | If (condition, then_body, elifs, else_body) ->
     let cond_typ = type_of_expr env condition in
-    if cond_typ <> TypBool && cond_typ <> TypU8 && cond_typ <> TypU16 then
+    if cond_typ <> TypBool && cond_typ <> TypU8 && cond_typ <> TypU16 && cond_typ <> TypI8 && cond_typ <> TypI16 then
       failwith "Condition must be boolean";
     let then_env = create_env (Some env) in
     List.iter (type_check_stmt then_env) then_body;
     List.iter (fun (cond, body) ->
       let cond_typ = type_of_expr env cond in
-      if cond_typ <> TypBool && cond_typ <> TypU8 && cond_typ <> TypU16 then
+      if cond_typ <> TypBool && cond_typ <> TypU8 && cond_typ <> TypU16 && cond_typ <> TypI8 && cond_typ <> TypI16 then
         failwith "Condition must be boolean";
       let elif_env = create_env (Some env) in
       List.iter (type_check_stmt elif_env) body
@@ -628,7 +717,7 @@ let rec type_check_stmt env stmt =
     List.iter (type_check_stmt else_env) else_body
   | While (condition, body) ->
     let cond_typ = type_of_expr env condition in
-    if cond_typ <> TypBool && cond_typ <> TypU8 && cond_typ <> TypU16 then
+    if cond_typ <> TypBool && cond_typ <> TypU8 && cond_typ <> TypU16 && cond_typ <> TypI8 && cond_typ <> TypI16 then
       failwith "Condition must be boolean";
     let body_env = create_env (Some env) in
     List.iter (type_check_stmt body_env) body
@@ -653,7 +742,7 @@ let rec type_check_stmt env stmt =
       let init_typ = type_of_expr env expr in
       if contains_struct typ || contains_struct init_typ then
         failwith (Printf.sprintf "cannot initialize `%s` with a whole struct (declare bare, then assign fields or copy with `=`)" name);
-      if not (assign_compat typ init_typ || decays_to_pointer typ init_typ expr) then
+      if not (assign_compat typ init_typ || literal_fits typ expr || decays_to_pointer typ init_typ expr) then
         failwith (Printf.sprintf "Type mismatch in variable declaration for %s" name)
     | None -> ());
     add_var env name typ
@@ -676,7 +765,7 @@ let rec type_check_stmt env stmt =
           failwith (Printf.sprintf "constant `%s` cannot be struct-typed" name);
         if is_array_value t then
           failwith (Printf.sprintf "constant `%s` cannot be array-typed" name);
-        if assign_compat t expr_typ then t
+        if assign_compat t expr_typ || literal_fits t expr then t
         else failwith (Printf.sprintf "Type mismatch in constant declaration for %s" name)
       | None ->
         (match expr_typ with
@@ -735,7 +824,7 @@ let type_check_program program =
         let init_typ = type_of_expr global_env expr in
         if contains_struct typ || contains_struct init_typ then
           failwith (Printf.sprintf "cannot initialize `%s` with a whole struct (declare bare, then assign fields or copy with `=`)" name);
-        if not (assign_compat typ init_typ || decays_to_pointer typ init_typ expr) then
+        if not (assign_compat typ init_typ || literal_fits typ expr || decays_to_pointer typ init_typ expr) then
           failwith (Printf.sprintf "Type mismatch in global variable declaration for %s" name)
       | None -> ());
       add_var global_env name typ
@@ -760,7 +849,7 @@ let type_check_program program =
             failwith (Printf.sprintf "constant `%s` cannot be struct-typed" name);
           if is_array_value t then
             failwith (Printf.sprintf "constant `%s` cannot be array-typed" name);
-          if assign_compat t expr_typ then t
+          if assign_compat t expr_typ || literal_fits t expr then t
           else failwith (Printf.sprintf "Type mismatch in global constant declaration for %s" name)
         | None ->
           (match expr_typ with
@@ -824,14 +913,14 @@ let type_check_program program =
     | BufferDecl b ->
       set_ctx b.buf_name;
       (match b.buf_elem with
-      | TypU8 | TypU16 | TypBool -> ()
+      | TypU8 | TypU16 | TypI8 | TypI16 | TypBool -> ()
       | TypMod _ ->
         failwith (Printf.sprintf "buffer `%s` cannot hold mod-typed elements (v1: mod lives on variables only)" b.buf_name)
       | TypStruct n ->
         (match lookup_struct global_env n with
         | Some _ -> ()
         | None -> failwith (Printf.sprintf "buffer `%s`: unknown type `%s`" b.buf_name n))
-      | _ -> failwith (Printf.sprintf "buffer `%s` must hold u8/u16/bool" b.buf_name));
+      | _ -> failwith (Printf.sprintf "buffer `%s` must hold u8/u16/i8/i16/bool" b.buf_name));
       add_var global_env b.buf_name (TypArray (b.buf_elem, b.buf_len))
     | StructDecl s ->
       set_ctx s.struct_name;
@@ -841,7 +930,7 @@ let type_check_program program =
          reference or cycle is an unknown-type error here, never a
          miscompile downstream. *)
       let rec valid_field fname = function
-        | TypU8 | TypU16 | TypBool -> ()
+        | TypU8 | TypU16 | TypI8 | TypI16 | TypBool -> ()
         | TypStruct n ->
           (match lookup_struct global_env n with
            | Some _ -> ()
@@ -851,7 +940,7 @@ let type_check_program program =
           if n < 1 then
             failwith (Printf.sprintf "struct `%s` field `%s`: array length must be positive" s.struct_name fname);
           (match e with
-           | TypU8 | TypU16 | TypBool -> ()
+           | TypU8 | TypU16 | TypI8 | TypI16 | TypBool -> ()
            | TypStruct sn ->
              (match lookup_struct global_env sn with
               | Some _ -> ()

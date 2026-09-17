@@ -128,3 +128,9 @@ vectors are compile errors (only `main` exempt; gated by
 explicit-discard idiom (new `Drop` node end to end), and comments
 holding whitespace-only inner parens warn at lex time (the exact
 `( ( )` trap, gated in `test_warn.ux`).
+Signed `i8`/`i16`: two's complement at the existing widths, strict
+lattice (same sign widens, bitwise reinterprets same-width, fitting
+literals adapt, signed `/`/`%` rejected), sign-flip comparisons and
+sign-extending promotion in codegen; gated by `test_signed.ux` (17
+bytes incl. the `0xff` sign-extension proof) plus four `check_fail`
+lattice locks.

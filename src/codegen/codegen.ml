@@ -18,6 +18,8 @@ type zero_item =
 let rec typ_size = function
   | Ast.TypU8 -> 1
   | Ast.TypU16 -> 2
+  | Ast.TypI8 -> 1
+  | Ast.TypI16 -> 2
   | Ast.TypBool -> 1
   | Ast.TypVoid -> 0
   | Ast.TypArray (t, n) -> n * (typ_size t)
@@ -51,8 +53,10 @@ type codegen_env = {
   mutable zero_order: zero_item list;
   mutable func_sigs: (string * int list) list;
   (* Declared return widths for call-result sizing (proposal 9
-     pre-pass fills both tables). *)
+     pre-pass fills both tables), plus return signedness for
+     sign-aware extension (i8 callees sign-extend, u8 zero-extend). *)
   mutable func_rets: (string * int) list;
+  mutable func_ret_sign: (string * bool) list;
   mutable func_ret: int option;
   (* Short function labels (`fn0`, `fn1`, ... in program order): the
      emitted `@fnN` keeps drifblim's per-name symbol dictionary small
@@ -102,6 +106,7 @@ let create_env () = {
   zero_order = [];
   func_sigs = [];
   func_rets = [];
+  func_ret_sign = [];
   func_ret = None;
   func_alias = [];
   next_buffer_addr = buffer_region_base;
@@ -389,6 +394,122 @@ let rec expr_is_u8 env expr =
         | _ -> false))
   | _ -> false
 
+(* Signedness mirrors for i8/i16: expr_is_s8 is true iff the expr
+   leaves exactly 1 SIGNED byte (needs sign-extension, not
+   zero-extension); expr_is_s16 iff it leaves a signed short.
+   Literals, ports and bools are never signed; bitwise ops follow the
+   lattice (same-sign keeps it, mixed goes unsigned). *)
+and field_typ env sname fname =
+  try Some (List.assoc fname (List.assoc sname env.struct_types))
+  with Not_found -> None
+
+and expr_is_s8 env expr =
+  match expr with
+  | Ident (n, _) ->
+    (try (match try List.assoc n env.local_vars with Not_found -> List.assoc n env.global_vars with
+          | { typ = Ast.TypI8; _ } -> true | _ -> false)
+     with Not_found -> false)
+  | UnOp ((Neg | NotBit), e) ->
+    expr_is_s8 env e
+    || (match e with IntLit (n, _) -> n >= 1 && n <= 128 | _ -> false)
+  | Call (Ident (n, _), _) ->
+    (try List.assoc n env.func_rets = 1 && List.assoc n env.func_ret_sign
+     with Not_found -> false)
+  | Index (Ident (n, _), _) ->
+    (try
+       let info =
+         try List.assoc n env.local_vars
+         with Not_found -> List.assoc n env.global_vars
+       in
+       (match info.typ with
+        | Ast.TypArray (Ast.TypI8, _) | Ast.TypPointer Ast.TypI8 -> true
+        | _ -> false)
+     with Not_found -> false)
+  | Field (Index (Ident (arr, _), _), fname) ->
+    (match is_struct_array env arr with
+     | Some sname ->
+       (match field_typ env sname fname with Some Ast.TypI8 -> true | _ -> false)
+     | None -> false)
+  | Field (Ident (v, _), fname) ->
+    (match is_struct_var env v with
+     | Some (sname, _) ->
+       (match field_typ env sname fname with Some Ast.TypI8 -> true | _ -> false)
+     | None -> false)
+  | Field (e, fname) ->
+    (match e with
+     | Ident _ | Index (Ident _, _) -> false
+     | _ ->
+       (match try Some (composite_node_typ env (Field (e, fname))) with _ -> None with
+        | Some Ast.TypI8 -> true
+        | _ -> false))
+  | Index (arr, _) ->
+    (match arr with
+     | Ident _ -> false
+     | _ ->
+       (match try Some (composite_node_typ env arr) with _ -> None with
+        | Some (Ast.TypArray (Ast.TypI8, _)) -> true
+        | Some (Ast.TypPointer Ast.TypI8) -> true
+        | _ -> false))
+  | BinOp ((Add | Sub | Mul), l, r) ->
+    expr_is_s8 env l && expr_is_s8 env r
+  | BinOp ((And | Or | Xor | Lshift | Rshift), l, r) ->
+    expr_is_s8 env l && expr_is_s8 env r
+  | _ -> false
+
+and expr_is_s16 env expr =
+  match expr with
+  | Ident (n, _) ->
+    (try (match try List.assoc n env.local_vars with Not_found -> List.assoc n env.global_vars with
+          | { typ = Ast.TypI16; _ } -> true | _ -> false)
+     with Not_found -> false)
+  | UnOp ((Neg | NotBit), e) ->
+    expr_is_s16 env e
+    || (match e with IntLit (n, _) -> n >= 129 && n <= 32768 | _ -> false)
+  | Call (Ident (n, _), _) ->
+    (try List.assoc n env.func_rets = 2 && List.assoc n env.func_ret_sign
+     with Not_found -> false)
+  | Index (Ident (n, _), _) ->
+    (try
+       let info =
+         try List.assoc n env.local_vars
+         with Not_found -> List.assoc n env.global_vars
+       in
+       (match info.typ with
+        | Ast.TypArray (Ast.TypI16, _) | Ast.TypPointer Ast.TypI16 -> true
+        | _ -> false)
+     with Not_found -> false)
+  | Field (Index (Ident (arr, _), _), fname) ->
+    (match is_struct_array env arr with
+     | Some sname ->
+       (match field_typ env sname fname with Some Ast.TypI16 -> true | _ -> false)
+     | None -> false)
+  | Field (Ident (v, _), fname) ->
+    (match is_struct_var env v with
+     | Some (sname, _) ->
+       (match field_typ env sname fname with Some Ast.TypI16 -> true | _ -> false)
+     | None -> false)
+  | Field (e, fname) ->
+    (match e with
+     | Ident _ | Index (Ident _, _) -> false
+     | _ ->
+       (match try Some (composite_node_typ env (Field (e, fname))) with _ -> None with
+        | Some Ast.TypI16 -> true
+        | _ -> false))
+  | Index (arr, _) ->
+    (match arr with
+     | Ident _ -> false
+     | _ ->
+       (match try Some (composite_node_typ env arr) with _ -> None with
+        | Some (Ast.TypArray (Ast.TypI16, _)) -> true
+        | Some (Ast.TypPointer Ast.TypI16) -> true
+        | _ -> false))
+  | BinOp ((Add | Sub | Mul), l, r) ->
+    let s e = expr_is_s8 env e || expr_is_s16 env e in
+    s l && s r && not (expr_is_s8 env l && expr_is_s8 env r)
+  | BinOp ((And | Or | Xor | Lshift | Rshift), l, r) ->
+    expr_is_s16 env l && expr_is_s16 env r
+  | _ -> false
+
 (* Reduce the on-stack value into [0, m): the existing `%` lowering
    with a constant modulus (DIVk MUL SUB / DIV2k MUL2 SUB2). Anything
    stored into a mod-typed slot passes through this, so the bound
@@ -453,23 +574,48 @@ let rec codegen_expr env expr =
       | Field (Ident (b, _), f) when is_device env b -> (match lookup_device_port env b f with Some 1 -> true | _ -> false)
       | _ -> false
     in
-    let use8 = is_eq && left_is_u8 && right_is_u8 in
-    let emit_operand e =
+    (* Ordered comparison over signed values flips the sign bit of
+       each signed side (literals fold the flip in) and compares
+       unsigned: `(a^0x8000) < (b^0x8000)` iff `a < b` signed. The
+       checker only lets same-sign pairs and literals through, so an
+       unsigned side here means a literal. *)
+    let is_ord = match op with Lt | Gt | Le | Ge -> true | _ -> false in
+    let flavored =
+      is_ord &&
+      (expr_is_s8 env left || expr_is_s16 env left ||
+       expr_is_s8 env right || expr_is_s16 env right) in
+    let use8 = is_eq && left_is_u8 && right_is_u8 && not (is_ord && flavored) in
+    let emit_operand flip e =
       if use8 then codegen_expr env e
       else
         (* 16-bit op: both operands must be shorts *)
         match e with
-        | IntLit (n, _) when n >= 0 && n <= 255 -> emit env "#%04x" n
+        | IntLit (n, _) when n >= 0 && n <= 255 ->
+          emit env "#%04x" (if flip then n lxor 0x8000 else n)
+        | _ when expr_is_s8 env e ->
+          codegen_expr env e; emit env " DUP #07 SFT #00 SWP SUB SWP";
+          if flip then emit env " #8000 EOR2"
         | _ when expr_is_u8 env e -> codegen_expr env e; emit env " #00 SWP"
-        | _ -> codegen_expr env e
+        | _ ->
+          codegen_expr env e;
+          if flip then emit env " #8000 EOR2"
     in
+    let flip_side e =
+      flavored &&
+      (match e with IntLit _ -> true | _ -> expr_is_s8 env e || expr_is_s16 env e) in
     (match op with
      | Lshift | Rshift ->
         (* Real SFT2. Control byte: high nibble = left distance,
            low nibble = right distance (rightward first). Constant
            amounts fold to one literal (masked mod 16); dynamic
-           amounts go through the high nibble via #40 SFT. *)
-        codegen_rhs env left 2;
+           amounts go through the high nibble via #40 SFT.
+           Shifts are logical on the low byte: always zero-extend
+           (a sign-extended negative would shift garbage into it). *)
+        (match left with
+         | IntLit (n, _) when n >= 0 && n <= 255 -> emit env "#%04x" n
+         | _ when expr_is_u8 env left || expr_is_s8 env left ->
+           codegen_expr env left; emit env " #00 SWP"
+         | _ -> codegen_expr env left);
         emit env " ";
         (match right with
         | IntLit (n, _) ->
@@ -497,9 +643,9 @@ let rec codegen_expr env expr =
         codegen_cond env right;
         emit env " ORA"
       | _ ->
-        emit_operand left;
+        emit_operand (flip_side left) left;
         emit env " ";
-        emit_operand right;
+        emit_operand (flip_side right) right;
         emit env " ";
         (match op with
        | Add -> if use8 then emit env "ADD" else emit env "ADD2"
@@ -546,7 +692,7 @@ let rec codegen_expr env expr =
              Truncate u16 arg to low byte via NIP. *)
           List.iter (fun arg ->
             codegen_expr env arg;
-            if not (expr_is_u8 env arg) then emit env " NIP";
+            if not (expr_is_u8 env arg || expr_is_s8 env arg) then emit env " NIP";
             emit env " "
           ) args;
           emit env ".Console/write DEO"
@@ -557,7 +703,7 @@ let rec codegen_expr env expr =
           (* Write to error: value Console/error DEO *)
           List.iter (fun arg ->
             codegen_expr env arg;
-            if not (expr_is_u8 env arg) then emit env " NIP";
+            if not (expr_is_u8 env arg || expr_is_s8 env arg) then emit env " NIP";
             emit env " "
           ) args;
           emit env ".Console/error DEO"
@@ -802,13 +948,17 @@ let rec codegen_expr env expr =
     emit env ";%s" name
 
 (* Emit RHS sized to dest_size bytes:
-   - dest 2, expr 1 byte -> zero-extend (#00 SWP) or short literal
+   - dest 2, expr 1 byte -> zero-extend (#00 SWP), sign-extend an i8
+     (DUP #07 SFT keeps the sign bit, 0 minus it is the high byte), or
+     short literal
    - dest 1, expr 2 bytes -> truncate low byte (NIP)
    - else direct. *)
 and codegen_rhs env expr dest_size =
   if dest_size = 2 then
     match expr with
     | IntLit (n, _) when n >= 0 && n <= 255 -> emit env "#%04x" n
+    | _ when expr_is_s8 env expr ->
+      codegen_expr env expr; emit env " DUP #07 SFT #00 SWP SUB SWP"
     | _ when expr_is_u8 env expr -> codegen_expr env expr; emit env " #00 SWP"
     | _ -> codegen_expr env expr
   else if dest_size = 1 then
@@ -959,7 +1109,9 @@ and codegen_cond env = function
   | RawLit _ as e -> codegen_expr env e
   | e ->
     codegen_expr env e;
-    if expr_is_u8 env e then () else emit env " #0000 NEQ2"
+    (* Byte-width values (unsigned or signed) test as-is; anything
+       wider reduces via #0000 NEQ2. *)
+    if expr_is_u8 env e || expr_is_s8 env e then () else emit env " #0000 NEQ2"
 
 let rec codegen_stmt env stmt =  match stmt with
   | ExprStmt expr ->
@@ -1179,7 +1331,7 @@ let rec codegen_stmt env stmt =  match stmt with
          | Ident _ | Index (Ident _, _) -> 2
          | _ ->
            (match try Some (composite_node_typ env (Field (e, fname))) with _ -> None with
-            | Some (Ast.TypU8 | Ast.TypBool) -> 1
+            | Some (Ast.TypU8 | Ast.TypBool | Ast.TypI8) -> 1
             | _ -> 2))
       | Index (arr, _) ->
         (* v2: sized by the array-typed path's element. *)
@@ -1189,6 +1341,7 @@ let rec codegen_stmt env stmt =  match stmt with
            (match try Some (composite_node_typ env arr) with _ -> None with
             | Some (Ast.TypArray (Ast.TypU8, _)) | Some (Ast.TypArray (Ast.TypBool, _)) -> 1
             | Some (Ast.TypPointer Ast.TypU8) | Some (Ast.TypPointer Ast.TypBool) -> 1
+            | Some (Ast.TypArray (Ast.TypI8, _)) | Some (Ast.TypPointer Ast.TypI8) -> 1
             | _ -> 2))
       | _ -> 2
     in
@@ -1361,7 +1514,9 @@ let codegen_program program =
     | FuncDecl f ->
       env.func_sigs <- (f.name, List.map (fun (p: Ast.param) -> resolve_size env p.typ) f.params) :: env.func_sigs;
       (match f.return_typ with
-      | Some t -> env.func_rets <- (f.name, resolve_size env t) :: env.func_rets
+      | Some t ->
+        env.func_rets <- (f.name, resolve_size env t) :: env.func_rets;
+        env.func_ret_sign <- (f.name, t = Ast.TypI8 || t = Ast.TypI16) :: env.func_ret_sign
       | None -> ());
       (* Short label `fnN`, skipping any N whose name a non-function
          decl already owns (a data blob named `fn3` must keep it) or a
@@ -1509,10 +1664,10 @@ let codegen_program program =
       env.data_order <- a.asset_name :: env.data_order
     | BufferDecl b ->
       let esz = (match b.buf_elem with
-        | Ast.TypU8 | Ast.TypBool -> 1
-        | Ast.TypU16 -> 2
+        | Ast.TypU8 | Ast.TypBool | Ast.TypI8 -> 1
+        | Ast.TypU16 | Ast.TypI16 -> 2
         | Ast.TypStruct s -> resolve_size env (Ast.TypStruct s)
-        | _ -> failwith (Printf.sprintf "buffer `%s` must hold u8/u16/bool" b.buf_name)) in
+        | _ -> failwith (Printf.sprintf "buffer `%s` must hold u8/u16/i8/i16/bool" b.buf_name)) in
       let total = esz * b.buf_len in
       let addr = env.next_buffer_addr in
       if addr + total > 0x10000 then

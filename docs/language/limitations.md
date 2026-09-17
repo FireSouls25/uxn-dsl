@@ -40,9 +40,13 @@ not are marked **footgun**.
   call or store re-evaluates every iteration. A body that assigns to
   a pure bound variable still iterates to the entry value. The loop
   variable is always `u16`, even over `u8` ranges.
-- **Integers are 0–65535, unsigned.** No negatives, no signed shifts
-  or division (right shifts are logical; `x - y` wraps). Division and
-  modulo by zero yield zero, per Uxn semantics.
+- **Integers are 0–65535, unsigned — plus `i8`/`i16`.** Negatives
+  come from unary minus on literals (`-5` is `i8`) or signed
+  arithmetic; ordered comparisons flip the sign bit, shifts stay
+  logical, and cross-sign mixing is an error with a named bridge.
+  Signed `/` and `%` are rejected (Uxn divides unsigned). Unsigned
+  division and modulo by zero yield zero, per Uxn semantics; `x - y`
+  wraps either way.
 - **Shift amounts are masked mod 16.**
 - **`&&` / `||` are bitwise**, not short-circuiting; both sides always
   evaluate.

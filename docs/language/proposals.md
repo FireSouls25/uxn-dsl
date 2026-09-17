@@ -433,11 +433,24 @@ loud. Warn at lex time on exactly that shape; balanced remarks stay
 quiet. (obsolete — implemented on `dev`, gated by the trap comment
 in `test_warn.ux`.)
 
+## 20. Signed integers (P1)
+
+Two's complement `i8`/`i16` at the existing widths: `+ - *`, unary
+`-`/`~` and equality are bitwise-identical, ordered comparisons flip
+the sign bit, widening sign-extends in codegen. Strict lattice —
+same sign widens, same-width cross-sign reinterprets as unsigned for
+bitwise only, everything else errors naming the bridge (`& 255` for
+bits, `u8 mod 128` for values, fitting literals adapt). `/` and `%`
+on signed fail loudly (no unsigned-division miscompile); `for`
+bounds, indices and `mod` bases stay unsigned.
+(obsolete — implemented on `dev`: lattice plus sign-aware lowering
+through sem/codegen, gated by `test_signed.ux` with four
+`check_fail` lattice locks. Supersedes the old "signed arithmetic"
+rejection below — the hardware still has none, but the checker now
+carries the interpretation.)
+
 ## Deliberately not proposed
 
-- **Signed arithmetic.** The hardware has none; `Neg`-as-`0-x` plus
-  unsigned ops cover real games. Full signed emulation is library
-  territory if anyone ever needs it.
 - **Heap, GC, classes, exceptions.** No runtime exists to implement
   them with, and adding one would betray the "what you write is what
   runs" contract.

@@ -59,6 +59,7 @@ check_cwd test_file 0a04303030610a30313233343536373839010a010121 etalfilet.bin
 check test_font 3f3f20417e3f3f08f00c3c183c
 check test_mouse 0100020000010403
 check test_string 0003010000014869210003
+check test_signed fbfe05f10100010101fffb6401fbfe0100
 check test_assert 41
 
 # check_brk <harness> <line> <col>: the ROM must print
@@ -128,3 +129,7 @@ check_fail() {
   echo "$name ok"
 }
 check_fail test_event_call 'cannot call event `vec_bad`'
+check_fail test_signed_mix 'mixed-sign arithmetic'
+check_fail test_signed_div 'signed `/` and `%` are not supported'
+check_fail test_signed_cmp 'cannot compare signed with unsigned'
+check_fail test_signed_narrow 'Type mismatch in variable declaration'

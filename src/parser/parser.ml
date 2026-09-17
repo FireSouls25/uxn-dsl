@@ -78,6 +78,8 @@ let rec parse_typ parser =
     match peek parser with
     | U8 -> ignore (advance parser); TypU8
     | U16 -> ignore (advance parser); TypU16
+    | I8 -> ignore (advance parser); TypI8
+    | I16 -> ignore (advance parser); TypI16
     | BOOL -> ignore (advance parser); TypBool
     | LBRACKET ->
       ignore (advance parser);
