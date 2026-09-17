@@ -136,3 +136,8 @@ bytes incl. the `0xff` sign-extension proof) plus four `check_fail`
 lattice locks.
 `lib/lerp.ux` (`lerp8`, total for all `u8` inputs, gated by
 `test_lerp.ux`) for slides/fades without hand-rolled promotion.
+Phase-3 stdlib from the chess session: `lib/input.ux` (vector-latch
+macros over game-declared `[1] u8` slots, zero library zero-page;
+chess migrated as production proof), `lib/fmt.ux` (`fmt_u8` fixed
+3-digit rendering), `lib/timer.ux` (4-slot main-RAM deadline pool
+with level `timer_ready`).

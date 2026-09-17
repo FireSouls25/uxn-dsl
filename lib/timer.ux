@@ -1,0 +1,33 @@
+( lib/timer.ux — deadline timers for UI sequencing (title
+  timeouts, staged jingles, think beats). A fixed pool of 4
+  single-byte countdowns in main RAM (zero zero-page cost):
+      timer_set(i, n);   ( arm timer i for n frames, 1..255 )
+      timer_tick();      ( call once per frame; nonzero counts down )
+      timer_ready(i);    ( 1 once the count hits zero )
+  Level semantics: ready stays true until re-armed, so a missed poll
+  still fires late rather than never. Slot 0 is fine for the common
+  one-timer case; longer than 255 frames chains (re-arm on fire).
+  Indices are unchecked, like all ETAL indexing — keep i under 4. )
+
+buffer timers[4]: u8;
+
+timer_set :: fn(i: u8, n: u8) {
+    timers[i] = n;
+}
+
+timer_tick :: fn() {
+    i: u8 = 0;
+    while i < 4 {
+        if timers[i] != 0 {
+            timers[i] = timers[i] - 1;
+        }
+        i = i + 1;
+    }
+}
+
+timer_ready :: fn(i: u8) -> u8 {
+    if timers[i] == 0 {
+        return 1;
+    }
+    return 0;
+}

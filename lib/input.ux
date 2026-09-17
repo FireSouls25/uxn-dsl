@@ -1,0 +1,58 @@
+( lib/input.ux — vector-latch input over game-declared state.
+  Two hardware facts force this shape (both grounded in
+  uxn2/src/uxn2.c): Controller.key self-clears right after firing,
+  so polling can never see a key; and a quick button down+up between
+  two frame polls is invisible to polling. Latch in the vectors,
+  consume in the frame.
+
+  State stays game-declared (never a builtin — importing this never
+  forces devices or zero-page on anyone): one `[1] u8` slot per
+  channel, or a 1-byte buffer when zero-page is tight:
+      kb: [1] u8;   ( latched key )
+      cb: [1] u8;   ( latched controller buttons, OR-accumulated )
+      mb: [1] u8;   ( latched mouse buttons, OR-accumulated )
+  Helpers are macros, so only call sites need the devices declared
+  (same doctrine as screen.ux). Wire them from tiny vector events:
+      on_key :: event() { key_latch(kb); cbtn_latch(cb); }
+      on_mouse :: event() { mouse_latch(mb); }
+  then take into frame locals once per frame:
+      key_take(kb, k); cbtn_take(cb, cb_now); mouse_take(mb, mnow);
+  Edge detection stays game-side (prev holders are inherently per
+  game — see mouse_poll in mouse.ux and menu edge polls for the
+  stateful halves); the take macros just deliver each latched press
+  exactly once (reads clear). Mouse/controller position ports never
+  clear and stay raw reads. )
+
+( Latch the key port. Must run in the controller vector — by the
+  next frame the port reads 0 again. )
+macro key_latch(s: &u8) {
+    s[0] = Controller.key;
+}
+
+( OR-accumulate controller buttons, so sub-frame taps survive. )
+macro cbtn_latch(s: &u8) {
+    s[0] = s[0] | Controller.button;
+}
+
+( OR-accumulate mouse buttons, same reason. )
+macro mouse_latch(s: &u8) {
+    s[0] = s[0] | Mouse.state;
+}
+
+( Take the latched key into d (a game variable), clearing the slot. )
+macro key_take(s: &u8, d: u8) {
+    d = s[0];
+    s[0] = 0;
+}
+
+( Take latched controller buttons the same way. )
+macro cbtn_take(s: &u8, d: u8) {
+    d = s[0];
+    s[0] = 0;
+}
+
+( Take mouse buttons: live state OR latched taps, then clear. )
+macro mouse_take(s: &u8, d: u8) {
+    d = Mouse.state | s[0];
+    s[0] = 0;
+}

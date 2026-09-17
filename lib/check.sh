@@ -61,6 +61,9 @@ check test_mouse 0100020000010403
 check test_string 0003010000014869210003
 check test_signed fbfe05f10100010101fffb6401fbfe0100
 check test_lerp 40c080807f11
+check test_input 1b0010000100
+check test_fmt 303030303037303432323535
+check test_timer 000001000101
 check test_assert 41
 
 # check_brk <harness> <line> <col>: the ROM must print

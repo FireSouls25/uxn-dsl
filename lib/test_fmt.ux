@@ -1,0 +1,22 @@
+( fmt harness: zero/pad/rollover/max through a scratch buffer.
+  Expected console bytes: 303030303037303432323535 )
+buffer fbuf[4]: u8;
+
+import "fmt.ux"
+
+emitbuf :: fn() {
+    varvara.console.write(fbuf[0]);
+    varvara.console.write(fbuf[1]);
+    varvara.console.write(fbuf[2]);
+}
+
+main :: fn() {
+    fmt_u8(fbuf, 0);
+    emitbuf();
+    fmt_u8(fbuf, 7);
+    emitbuf();
+    fmt_u8(fbuf, 42);
+    emitbuf();
+    fmt_u8(fbuf, 255);
+    emitbuf();
+}

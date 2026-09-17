@@ -47,6 +47,33 @@ playing) over a shared frame table: `anim_play` (looping),
 frame and stops, ping-pong bounces), `anim_stop/start/playing`,
 `anim_step` (stopped rows freeze with the tile untouched).
 
+## input.ux
+
+Vector-latch input over game-declared `[1] u8` slots (or 1-byte
+buffers when zero-page is tight): `key_latch`/`cbtn_latch`/
+`mouse_latch` for the vector bodies, `key_take`/`cbtn_take`/
+`mouse_take` delivering each press exactly once (reads clear;
+`mouse_take` ORs live state with latched taps). Macros, so only call
+sites need the devices — same doctrine as `screen.ux` — and zero
+library zero-page. Edge detection stays game-side (see `mouse_poll`
+and the menu polls); position ports never clear and stay raw reads.
+
+## fmt.ux
+
+`fmt_u8(dst, v)` writes three digits plus NUL (`7` becomes `"007"`)
+into a 4-byte caller buffer: fixed width keeps columns aligned, and
+subtraction loops keep every temporary in `u8`. Unsigned only;
+callers own the sign.
+
+## timer.ux
+
+Deadline timers for UI sequencing: `timer_set(i, n)` arms one of 4
+countdowns, `timer_tick()` runs once per frame, `timer_ready(i)`
+reads true once the count hits zero (level semantics — a missed poll
+fires late, never lost; re-arm to reuse). Main-RAM pool, zero
+zero-page cost; over 255 frames chains. Indices unchecked, like all
+indexing.
+
 ## lerp.ux
 
 `lerp8(a, b, k, n)` walks byte `a` to byte `b` as `k` runs `0..n`:

@@ -1,0 +1,27 @@
+( lib/fmt.ux — fixed-width decimal text into caller buffers.
+  Pure math over a `&u8` destination, no devices.
+
+  fmt_u8(dst, v) writes three digits plus NUL (`7` becomes "007"):
+  fixed width keeps panel columns aligned without measuring, and
+  subtraction loops keep every temporary in u8 (a dividing version
+  would widen through u16 and need narrowing back). At most 2 + 9
+  iterations — trivial for UI text. dst needs 4 bytes. Unsigned
+  only; callers own the sign (see mat_show in chess game.ux). )
+
+fmt_u8 :: fn(dst: &u8, v: u8) {
+    h: u8 = 0;
+    r: u8 = v;
+    while r >= 100 {
+        r = r - 100;
+        h = h + 1;
+    }
+    t: u8 = 0;
+    while r >= 10 {
+        r = r - 10;
+        t = t + 1;
+    }
+    dst[0] = 48 + h;
+    dst[1] = 48 + t;
+    dst[2] = 48 + r;
+    dst[3] = 0;
+}

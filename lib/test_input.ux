@@ -1,0 +1,53 @@
+( input harness: latch/take over synthetic port states (live
+  vectors need events; headless runs drive the ports and call the
+  latch macros directly — the same bodies the vectors would run).
+  Expected console bytes: 1b 00 10 00 01 00 )
+device Controller 128 {
+    vector: 2
+    button: 1
+    key: 1
+}
+device Mouse 144 {
+    vector: 2
+    x: 2
+    y: 2
+    state: 1
+    pad: 3
+    scrollx: 2
+    scrolly: 2
+}
+import "input.ux"
+
+kb: [1] u8;
+cbtn: [1] u8;
+mb: [1] u8;
+
+main :: fn() {
+    ( key latches, takes once, then reads clear )
+    Controller.key = 27;
+    key_latch(kb);
+    k: u8 = 0;
+    key_take(kb, k);
+    varvara.console.write(k);
+    key_take(kb, k);
+    varvara.console.write(k);
+    ( button tap survives release via the latch )
+    Controller.button = 16;
+    cbtn_latch(cbtn);
+    Controller.button = 0;
+    cbtn_latch(cbtn);
+    c: u8 = 0;
+    cbtn_take(cbtn, c);
+    varvara.console.write(c);
+    cbtn_take(cbtn, c);
+    varvara.console.write(c);
+    ( mouse ORs live state with latched taps )
+    Mouse.state = 1;
+    mouse_latch(mb);
+    Mouse.state = 0;
+    m: u8 = 0;
+    mouse_take(mb, m);
+    varvara.console.write(m);
+    mouse_take(mb, m);
+    varvara.console.write(m);
+}
