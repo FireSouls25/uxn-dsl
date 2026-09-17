@@ -106,3 +106,10 @@ blob content, not just address math. Input-bis: `Controller.key` polling
 can't work (the VM self-clears the port between frames) — chess latches
 keys/buttons in `on_key`/`on_mouse` vectors; mouse coords are window
 pixels (zoom ≠ 1 miscalibrates, upstream quirk), both noted in limitations.
+Chess input pass: game-drawn cursor (the VM hides the system one),
+`>` selection markers with mouse hover tracking, and full keyboard
+play of every menu — arrows/W/S move, Enter/Space/Z confirm — over a
+latched controller-button edge mask (`cbtnbuf`, taps can't fall
+between frames). Headless-harness proven: cursor follows the mouse,
+arrows + Enter leave the menu, S + Space start as Black, ESC
+pauses/resumes with stable stacks.

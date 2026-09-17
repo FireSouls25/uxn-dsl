@@ -129,6 +129,10 @@ but no syntax builds them (`RawStmt` does — `raw {}` blocks).
   1–3) the VM reports unscaled positions, so clicks miscalibrate by
   the zoom factor — upstream uxn2 behavior, not an ETAL bug. Play at
   zoom 1 (or scale the hit-test if you ship a default zoom).
+- **The VM hides the system cursor** over the window
+  (`SDL_ShowCursor` off in uxn2.c), so without a drawn cursor the
+  mouse visibly vanishes on top of the game — uxn games draw their
+  own (chess blits a `cursor` tile last in every scene draw).
 - Devices beyond console/screen/controller/mouse/datetime/file
   (other than audio — see `lib/audio.ux`, `lib/song.ux` — FileA —
   see `lib/file.ux` — and mouse edges — see `lib/mouse.ux`) have no
