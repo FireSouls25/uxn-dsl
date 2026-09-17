@@ -51,9 +51,13 @@ blunders, not their attention.
   between frames and quick clicks fall between polls, so raw polling
   misses both. Menus share one `menu_sel` between hover and arrows/W/S
   + Enter/Space/Z.
-- The bot's reply glides over 10 frames (buffer-resident lerp, zero
-  zero-page cost); castling slides only the king and en-passant
-  victims vanish at move time. Human drags need no anim.
+- Every move glides over 10 frames (buffer-resident lerp, zero
+  zero-page cost): the human drop arms it, and the bot reply chains
+  off its last frame, so the two glides play in turn with a natural
+  thinking beat. Castling slides only the king and en-passant victims
+  vanish at move time.
+- Menu QUIT writes nonzero `System/state`, which is what breaks the VM
+  loop — a real quit. (`brk` there only ended one frame.)
 
 ## Running it
 
