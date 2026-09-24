@@ -2,7 +2,7 @@
 
 open Printf
 
-let usage = "Usage: etal [options] <input.ux>\n\nOptions:\n  -o <output>    Output file (default depends on mode)\n  -t             Output Uxntal source (.tal)\n  -r             Output assembled ROM (.rom)\n  --target <t>   Bundle target: native (default) or web (single .html)\n  --zp-report   Print zero-page usage (total + per-function) to stderr\n  -v             Verbose output\n  -h             Show this help\n\nWith neither -t nor -r, etal outputs a single self-contained\nbundle: the vendored uxn vm plus the assembled ROM (native), or\na playable web page with the vendored uxn5 emulator (--target web).\nExtra native-bundle arguments are passed to the vm\n(e.g. ./game -2 for 2x zoom).\n"
+let usage = "Usage: etal [options] <input.ux>\n\nOptions:\n  -o <output>    Output file (default depends on mode)\n  -t             Output Uxntal source (.tal)\n  -r             Output assembled ROM (.rom)\n  --target <t>   Bundle target: native (host row, default), web (single .html),\n                 or an explicit VM row: linux-x86_64, linux-aarch64,\n                 macos-arm64, macos-x86_64, windows-x86_64 (zip).\n                 Assembly always runs under the host VM; --target only\n                 selects which vendored VM is packaged. One Linux backend\n                 can therefore serve every download option.\n  --list-targets List known --target rows and which VM rows are vendored\n  --zp-report   Print zero-page usage (total + per-function) to stderr\n  -v             Verbose output\n  -h             Show this help\n\nWith neither -t nor -r, etal outputs a single self-contained\nbundle: the vendored uxn vm plus the assembled ROM (native rows), or\na playable web page with the vendored uxn5 emulator (--target web).\nExtra unix-bundle arguments are passed to the vm\n(e.g. ./game -2 for 2x zoom); windows bundles run via run.bat.\n"
 
 (* Proposal 12: turn a `file:line:col: ...` failure into a backend-
    friendly diagnostic plus the offending source line. A Windows
@@ -40,18 +40,41 @@ let () =
   let emit_tal = ref false in
   let emit_rom = ref false in
   let target = ref "native" in
+  let list_targets = ref false in
   let verbose = ref false in
 
   let speclist = [
     ("-o", Arg.String (fun s -> output_file := Some s), "Output file");
     ("-t", Arg.Unit (fun () -> emit_tal := true), "Output Uxntal only");
     ("-r", Arg.Unit (fun () -> emit_rom := true), "Output ROM only");
-    ("--target", Arg.String (fun s -> target := s), "Bundle target: native (default) or web");
+    ("--target", Arg.String (fun s -> target := s), "Bundle target: native (default), web, or explicit VM row");
+    ("--list-targets", Arg.Unit (fun () -> list_targets := true), "List known --target rows and vendored VM status");
     ("--zp-report", Arg.Unit (fun () -> Codegen.zp_report := true), "Print zero-page usage to stderr");
     ("-v", Arg.Unit (fun () -> verbose := true), "Verbose output");
   ] in
 
   Arg.parse speclist (fun s -> input_file := Some s) usage;
+
+  (* Backend discovery: no input needed, exit 0 after listing. The
+     `vendored` column tells a FastAPI backend which download options
+     it can serve from this checkout/closure. *)
+  if !list_targets then begin
+    printf "target\tkind\tvendored\n";
+    printf "native\thost alias for %s\t%s\n"
+      (Lazy.force Target_native.host_row)
+      (try ignore (Target_native.default_uxn2_path ()); "yes" with Failure _ -> "no");
+    printf "web\tuxn5 html\t%s\n"
+      (let d = Target_web.default_uxn5_dir () in
+       if Sys.file_exists (Filename.concat d "src/uxn.js") then "yes" else "no");
+    List.iter (fun row ->
+      let kind = if Target_native.is_windows_row row then "zip" else "sh+tar.gz" in
+      let vendored =
+        (try ignore (Target_native.uxn2_path_for_row row); "yes"
+         with Failure _ -> "no") in
+      printf "%s\t%s\t%s\n" row kind vendored)
+      Target_native.known_rows;
+    exit 0
+  end;
 
   if !emit_tal && !emit_rom then begin
     eprintf "Error: -t and -r are mutually exclusive\n";
@@ -64,7 +87,9 @@ let () =
     match !target with
     | "native" -> `Native
     | "web" -> `Web
-    | s -> eprintf "Error: unknown --target `%s` (want native or web)\n" s; exit 1
+    | s when List.mem s Target_native.known_rows -> `Native_row s
+    | s -> eprintf "Error: unknown --target `%s` (want native, web, or one of: %s)\n"
+        s (String.concat ", " Target_native.known_rows); exit 1
   in
 
   let input_file = match !input_file with
@@ -79,7 +104,11 @@ let () =
       (match mode with
       | `Tal -> base ^ ".tal"
       | `Rom -> base ^ ".rom"
-      | `Bundle -> (match target with `Native -> base | `Web -> base ^ ".html"))
+      | `Bundle -> (match target with
+        | `Native -> base
+        | `Native_row row when Target_native.is_windows_row row -> base ^ ".zip"
+        | `Native_row _ -> base
+        | `Web -> base ^ ".html"))
   in
 
   if !verbose then eprintf "Compiling %s to %s\n" input_file output_file;
@@ -139,16 +168,19 @@ let () =
     close_out oc;
 
     let drifblim_path = Target_native.default_drifblim_path () in
-    let uxn2_path = Target_native.default_uxn2_path () in
+    (* Assembly always executes under the HOST vm (a macOS/Windows
+       binary cannot run on the Linux backend); --target only selects
+       the packaged binary further below. *)
+    let asm_uxn2_path = Target_native.default_uxn2_path () in
 
     if !verbose then begin
       eprintf "Using drifblim: %s\n" drifblim_path;
-      eprintf "Using uxn2: %s\n" uxn2_path
+      eprintf "Using uxn2 for assembly: %s\n" asm_uxn2_path
     end;
 
     let temp_rom = Filename.temp_file ~temp_dir:input_dir "etal" ".rom" in
     let cmd = sprintf "%s %s %s %s"
-      (Filename.quote uxn2_path) (Filename.quote drifblim_path)
+      (Filename.quote asm_uxn2_path) (Filename.quote drifblim_path)
       (Filename.quote temp_tal) (Filename.quote temp_rom) in
     if !verbose then eprintf "Running: %s\n" cmd;
 
@@ -168,9 +200,16 @@ let () =
     | `Bundle ->
       (match target with
       | `Native ->
-        Target_native.bundle ~verbose:!verbose ~uxn2_path ~rom_path:temp_rom ~output_file;
+        Target_native.bundle ~verbose:!verbose
+          ~uxn2_path:(Target_native.default_uxn2_path ())
+          ~rom_path:temp_rom ~output_file;
         Sys.remove temp_rom;
         if !verbose then eprintf "Wrote executable bundle to %s\n" output_file
+      | `Native_row row ->
+        Target_native.bundle_for_row ~verbose:!verbose
+          ~row ~rom_path:temp_rom ~output_file;
+        Sys.remove temp_rom;
+        if !verbose then eprintf "Wrote %s bundle to %s\n" row output_file
       | `Web ->
         Target_web.bundle ~verbose:!verbose
           ~vendor_dir:(Target_web.default_uxn5_dir ())

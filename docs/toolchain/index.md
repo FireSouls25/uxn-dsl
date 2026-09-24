@@ -27,7 +27,10 @@ etal [options] <input.ux>
   -o <file>     output file (default depends on mode)
   -t            emit Uxntal source (.tal)
   -r            emit an assembled ROM (.rom)
-  --target t    bundle target: native (default) or web (single .html)
+  --target t    bundle target: native (host row, default), web (single .html),
+                or explicit VM row (linux-x86_64, linux-aarch64,
+                macos-arm64, macos-x86_64, windows-x86_64)
+  --list-targets list known rows + vendored status (backend discovery)
   -v            verbose (declaration counts, chosen tools, output sizes)
 ```
 
@@ -37,12 +40,17 @@ Three ways out of one input, same bytes in:
 |---|---|---|
 | Inspect | `etal -t game.ux -o game.tal` | readable Uxntal, the compiler's contract |
 | ROM | `etal -r game.ux -o game.rom` | assembled via vendored drifblim |
-| Bundle (native) | `etal game.ux -o game` | self-contained executable (VM + ROM) |
+| Bundle (native, host) | `etal game.ux -o game` | self-contained executable (host VM + ROM) |
+| Bundle (explicit row) | `etal --target macos-arm64 game.ux -o game` | same ROM + that row's VM (unix rows: sh+tar.gz; windows: zip with `run.bat`) |
 | Bundle (web) | `etal --target web game.ux -o game.html` | self-contained page (uxn5 + ROM) |
 
-`-t` and `-r` are mutually exclusive. Bundling assembles through a
+`-t` and `-r` are mutually exclusive. Assembly always runs under the
+host VM (a foreign binary cannot execute here); `--target` only
+selects the packaged VM — so one Linux backend serves every download
+option (`etal --list-targets` reports which rows are vendored).
+Bundling assembles through a
 temp `.tal` next to the input and cleans up after itself; assembly
-failures report the assembler's exit code. Native bundles forward
+failures report the assembler's exit code. Unix bundles forward
 extra arguments to the VM (`./game -2` boots at 2x zoom); the temp
 extraction dir is removed on exit, interrupt, or termination.
 
@@ -51,6 +59,8 @@ extraction dir is removed on exit, interrupt, or termination.
 ```
 vendor/
   linux-x86_64/uxn2   # Linux VM (glibc 2.17 floor, dynamic SDL2)
+  macos-arm64/uxn2    # macOS arm64 VM (see BUILD.md SDL2 note)
+  windows-x86_64/     # TODO: uxn2.exe + SDL2.dll (zip carrier ready)
   shared/drifblim.rom # the assembler — itself a ROM, so portable
   uxn5/               # JS emulator for --target web (pinned, see PIN)
   BUILD.md            # provenance + per-OS build instructions

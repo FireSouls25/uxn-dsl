@@ -55,6 +55,7 @@
             postInstall = (oa.postInstall or "") + ''
               cp -r "${oa.src}/vendor" "$out/vendor"
               chmod +x "$out/vendor/linux-x86_64/uxn2"
+              if [ -f "$out/vendor/macos-arm64/uxn2" ]; then chmod +x "$out/vendor/macos-arm64/uxn2"; fi
             '';
           });
         };
