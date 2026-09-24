@@ -34,3 +34,20 @@ mouse_poll :: fn(cur: u8) -> u8 {
     mouse_last = cur;
     return pressed;
 }
+
+( Level test with the right-button quirk centralized: every mask
+  tests with &, except MOUSE_RIGHT which tests == (right overlaps
+  bit 0 in the emulator SDL mapping, so & cannot isolate it).
+  Edge version: mask the mouse_poll result the same way. )
+mouse_down :: fn(cur: u8, mask: u8) -> u8 {
+    if mask == MOUSE_RIGHT {
+        if cur == MOUSE_RIGHT {
+            return 1;
+        }
+        return 0;
+    }
+    if cur & mask != 0 {
+        return 1;
+    }
+    return 0;
+}

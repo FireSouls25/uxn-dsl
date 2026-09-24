@@ -1,0 +1,80 @@
+( lib/gesture.ux — press/hold/drag helpers for pointer + button events.
+  Pure functions over caller-provided values (no devices touched, no
+  imports), so importing this never forces a device or a vector on
+  anyone — call sites declare Controller/Mouse as usual.
+
+  Backend/builder mapping (stable, index-based, JSON-friendly):
+      on_click(rect) -> edge bits from menu_poll/mouse_poll, then
+                        pt_in_rect(px, py, rx, ry, rw, rh)
+      on_hold        -> hold_poll(cur, mask, slot, delay, rate)
+                        (fires on press, then every rate frames
+                        after delay frames, while held)
+      drag_mouse     -> drag_reset(x, y) on press, then
+                        drag_moved(x, y) per frame
+      press_key(key) -> key_latch/key_take in input.ux (unchanged)
+  Hold slots are 0..3 (fixed pool in main RAM, zero zero-page cost);
+  drag keeps one anchor pair (4 zero-page bytes). )
+
+( Hit test: 1 when point px py hits rect rx ry rw rh, half-open
+  on the far edges. Rects must not wrap past 65535. )
+pt_in_rect :: fn(px: u16, py: u16, rx: u16, ry: u16, rw: u16, rh: u16) -> u8 {
+    if px >= rx && px < rx + rw && py >= ry && py < ry + rh {
+        return 1;
+    }
+    return 0;
+}
+
+( Hold/repeat counters, one per slot. )
+buffer hold_cnt[4]: u8;
+
+( Clear a hold slot (scene changes, focus loss). )
+hold_reset :: fn(s: u8) {
+    hold_cnt[s] = 0;
+}
+
+( Fire pattern while `mask` bits are down in `cur` (a live port read
+  or a latched take): 1 on the press frame, then 1 every `rate`
+  frames once `delay` frames have passed; 0 otherwise. Release
+  resets the slot. `delay`/`rate` of 0 mean repeat every frame.
+  Slot index unchecked, like all indexing — keep s under 4. )
+hold_poll :: fn(cur: u8, mask: u8, s: u8, delay: u8, rate: u8) -> u8 {
+    if cur & mask == 0 {
+        hold_cnt[s] = 0;
+        return 0;
+    }
+    if hold_cnt[s] == 0 {
+        hold_cnt[s] = delay;
+        return 1;
+    }
+    hold_cnt[s] = hold_cnt[s] - 1;
+    if hold_cnt[s] == 0 {
+        hold_cnt[s] = rate;
+        return 1;
+    }
+    return 0;
+}
+
+( Drag anchor: last polled position. )
+drag_lx: u16 = 0;
+drag_ly: u16 = 0;
+
+( Anchor the drag tracker (call on press). )
+drag_reset :: fn(x: u16, y: u16) {
+    drag_lx = x;
+    drag_ly = y;
+}
+
+( 1 when (x, y) moved since the last poll; always re-anchors, so a
+  missed poll reports one move, never a stale offset. )
+drag_moved :: fn(x: u16, y: u16) -> u8 {
+    moved: u8 = 0;
+    if x != drag_lx {
+        moved = 1;
+    }
+    if y != drag_ly {
+        moved = 1;
+    }
+    drag_lx = x;
+    drag_ly = y;
+    return moved;
+}

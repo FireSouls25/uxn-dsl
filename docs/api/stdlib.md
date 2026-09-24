@@ -92,14 +92,31 @@ solid walls, pass-through ghosts), `obj_cell_hit` (8px cells),
 — pop resumes exactly where the game was; over/underflow
 ignored). Menus are edge polls (`menu_poll` — call once per
 frame), `menu_items/next/prev` with wraparound; act on `poll & MASK`
-idioms, never equality. Mouse is the same edge shape over
+idioms, never equality — or name it with `ctl_down(cur, mask)` from
+`input.ux` (same mask test, stateless, over a live port or a taken
+latch). Mouse is the same edge shape over
 game-read state (`mouse_poll(Mouse.state)`, `MOUSE_LEFT/MIDDLE/
-RIGHT/X1` from the emulator's SDL mapping); position and scroll
+RIGHT/X1` from the emulator's SDL mapping, plus `mouse_down(cur,
+mask)` which centralizes the right-button quirk: `&` for every mask
+except `MOUSE_RIGHT`, which tests `==`); position and scroll
 stay raw port reads (scroll is one-shot with inverted Y) — live
 clicks need a display, so the gate feeds synthetic states. The
 `examples/objdemo/` game (untracked, like the other examples)
 plays all phases together: title menu, animated player, layered
 walls, score-to-win, game-over loop.
+
+## gesture.ux
+
+Press/hold/drag over caller-provided values — no devices touched, no
+imports, so it never forces a vector on anyone. The low-code builder
+mapping: `on_click(rect)` is an edge from `menu_poll`/`mouse_poll`
+plus `pt_in_rect`; `on_hold` is `hold_poll` (fires on press, then
+every `rate` frames after `delay` frames, `0` = every frame; release
+resets); `drag_mouse` is `drag_reset` on press plus `drag_moved` per
+frame (re-anchors every poll, so a missed frame reports one move,
+never a stale offset); `press_key` stays `key_latch`/`key_take` in
+`input.ux`. Hold slots are a fixed 4-pool in main RAM and drag keeps
+one anchor pair, so emitters allocate them by small index.
 
 ## fix16.ux
 

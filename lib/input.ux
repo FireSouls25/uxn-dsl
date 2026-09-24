@@ -56,3 +56,15 @@ macro mouse_take(s: &u8, d: u8) {
     d = Mouse.state | s[0];
     s[0] = 0;
 }
+
+( Stateless level test over an already-read button byte (live
+  Controller.button or a cbtn_take result): 1 while any mask bit is
+  down, 0 otherwise. Masks, never equality, so combined presses
+  (up+right) keep working. Edge stays with menu_poll; hold/repeat
+  is hold_poll in gesture.ux. )
+ctl_down :: fn(cur: u8, mask: u8) -> u8 {
+    if cur & mask != 0 {
+        return 1;
+    }
+    return 0;
+}

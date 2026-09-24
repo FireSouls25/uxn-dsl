@@ -1,0 +1,41 @@
+( gesture harness: hit-test, mask level tests, hold/repeat frames,
+  drag deltas — all pure/headless (live vectors only feed values).
+  Expected console bytes:
+  01 00 00 00 00 01 00 01 00 01 01 00 01 00 00 01 00 01 00 01 00 01 00 01 )
+import "gesture.ux"
+import "mouse.ux"
+import "input.ux"
+
+main :: fn() {
+    ( rect hits: inside, left of, below, exclusive far edge, empty )
+    varvara.console.write(pt_in_rect(20, 30, 16, 24, 32, 16));
+    varvara.console.write(pt_in_rect(10, 30, 16, 24, 32, 16));
+    varvara.console.write(pt_in_rect(20, 99, 16, 24, 32, 16));
+    varvara.console.write(pt_in_rect(48, 30, 16, 24, 32, 16));
+    varvara.console.write(pt_in_rect(20, 30, 16, 24, 0, 0));
+    ( mask levels: left down/up, right quirk, middle )
+    varvara.console.write(mouse_down(1, MOUSE_LEFT));
+    varvara.console.write(mouse_down(0, MOUSE_LEFT));
+    varvara.console.write(mouse_down(3, MOUSE_RIGHT));
+    varvara.console.write(mouse_down(1, MOUSE_RIGHT));
+    varvara.console.write(mouse_down(4, MOUSE_MIDDLE));
+    ( controller combos test by mask, never equality )
+    varvara.console.write(ctl_down(144, 16));
+    varvara.console.write(ctl_down(0, 16));
+    ( hold slot 0, delay 3 rate 2, mask 16 held: press, gap, repeat )
+    varvara.console.write(hold_poll(16, 16, 0, 3, 2));
+    varvara.console.write(hold_poll(16, 16, 0, 3, 2));
+    varvara.console.write(hold_poll(16, 16, 0, 3, 2));
+    varvara.console.write(hold_poll(16, 16, 0, 3, 2));
+    varvara.console.write(hold_poll(16, 16, 0, 3, 2));
+    varvara.console.write(hold_poll(16, 16, 0, 3, 2));
+    ( release clears; next press fires at once )
+    varvara.console.write(hold_poll(0, 16, 0, 3, 2));
+    varvara.console.write(hold_poll(16, 16, 0, 3, 2));
+    ( drag: still, moved, still, moved )
+    drag_reset(10, 20);
+    varvara.console.write(drag_moved(10, 20));
+    varvara.console.write(drag_moved(12, 20));
+    varvara.console.write(drag_moved(12, 20));
+    varvara.console.write(drag_moved(12, 25));
+}

@@ -64,6 +64,7 @@ check test_lerp 40c080807f11
 check test_input 1b0010000100
 check test_fmt 303030303037303432323535
 check test_timer 000001000101
+check test_gesture 010000000001000100010100010000010001000100010001
 check test_assert 41
 
 # check_brk <harness> <line> <col>: the ROM must print
