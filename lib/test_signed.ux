@@ -1,0 +1,97 @@
+( signed-integer harness: i8/i16 literals, wrap arithmetic, ordered
+  comparisons (incl. literal folding), sign extension, bitwise
+  reinterpret, the mod bridge, struct fields and buffers.
+  Expected console bytes: fb fe 05 f1 01 00 01 01 01 ff fb 64 01 fb fe 01 00 )
+device Screen 32 {
+    vector: 2
+    width: 2
+    height: 2
+    x: 2
+    y: 2
+    addr: 2
+    pixel: 1
+    sprite: 1
+}
+neg5: i8 = -5;
+neg10: i8 = -10;
+three: i8 = 3;
+neg300: i16 = -300;
+five16: i16 = 5;
+u100: u8 = 100;
+
+Pt :: struct { dx: i8; };
+buffer sb[4]: i8;
+buffer wb[2]: i16;
+
+getw :: fn() -> i16 {
+    return -300;
+}
+
+main :: fn() {
+    Screen.width = 128;
+    Screen.height = 128;
+    ( negative literals land two's complement )
+    varvara.console.write(neg5);
+    varvara.console.write(neg300 >> 8);
+    varvara.console.write(three + 2);
+    ( wrap arithmetic stays in range )
+    s: i8 = neg5 + neg10;
+    varvara.console.write(s);
+    ( ordered comparisons, same-sign and literal-folded )
+    if neg5 < three {
+        varvara.console.write(1);
+    } else {
+        varvara.console.write(0);
+    }
+    if three < neg5 {
+        varvara.console.write(1);
+    } else {
+        varvara.console.write(0);
+    }
+    if neg5 == neg5 {
+        varvara.console.write(1);
+    } else {
+        varvara.console.write(0);
+    }
+    if neg5 < 0 {
+        varvara.console.write(1);
+    } else {
+        varvara.console.write(0);
+    }
+    if neg5 > -10 {
+        varvara.console.write(1);
+    } else {
+        varvara.console.write(0);
+    }
+    ( widening sign-extends: high byte of -5 is 0xff )
+    w: i16 = neg5;
+    varvara.console.write(w >> 8);
+    ( same-width bits reinterpret unsigned )
+    varvara.console.write(neg5 & 255);
+    ( mod bridge proves a value fits )
+    m: u8 mod 128 = u100;
+    k: i8 = m;
+    varvara.console.write(k);
+    ( struct fields and buffers carry sign )
+    p: Pt;
+    p.dx = -5;
+    if p.dx < 0 {
+        varvara.console.write(1);
+    } else {
+        varvara.console.write(0);
+    }
+    sb[0] = -5;
+    varvara.console.write(sb[0]);
+    wb[0] = getw();
+    varvara.console.write(wb[0] >> 8);
+    if neg300 < five16 {
+        varvara.console.write(1);
+    } else {
+        varvara.console.write(0);
+    }
+    if 5 < neg5 {
+        varvara.console.write(1);
+    } else {
+        varvara.console.write(0);
+    }
+}

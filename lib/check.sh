@@ -29,11 +29,112 @@ check() {
   echo "$name ok"
 }
 
+# check_cwd <harness> <expected-lowercase-hex> <stray-file>
+# Like check, but runs the ROM with CWD inside TMPD (the File device
+# resolves paths against the emulator's working directory), then
+# asserts the harness cleaned up its stray file.
+check_cwd() {
+  name=$1
+  want=$2
+  stray=$3
+  "$ETAL" -r "$ROOT/lib/$name.ux" -o "$TMPD/$name.rom" \
+    || fail "$name: assembly failed"
+  got=$(cd "$TMPD" && SDL_VIDEODRIVER=dummy "$ROOT/vendor/linux-x86_64/uxn2" "$TMPD/$name.rom" \
+    | od -A n -t x1 | tr -d ' \n')
+  [ "$got" = "$want" ] || fail "$name: got $got want $want"
+  [ ! -e "$TMPD/$stray" ] || fail "$name: stray file left behind: $stray"
+  echo "$name ok"
+}
+
 check test_u32 31303131303131303131303439
+check test_song 3c437f7f3e7f7f433c7f7f7f3e437f7f
+check test_struct 0b212c37424d2c580a
 check test_fix16 010006000040fe00060000027fff001a00800180004001000355fe8000557fff000003000100ff0000000200010002007fffff0000000100fe00010080010200ff0001007fff00000001ffff0002ffff05007f007fff
 check test_screen 00a00090006400c8012c
 check test_object 00000001000b00153030303131313000000000
-check test_anim 006400c800c8012c012c0064
-check test_scene 00000002001000000020000100000002
+check test_anim 006400c800c8012c012c006400160021002100000021003700420037002c003700640064000000c80001
+check test_scene 0000000200100000002000010000000200050002000700050005000700020005
 check test_trig 0000006200b500ec01010000010100b500b50101000000b5ff4b0000feffff4bff4bfeff0000ff4b00b5
+check_cwd test_file 0a04303030610a30313233343536373839010a010121 etalfilet.bin
+check test_font 3f3f20417e3f3f08f00c3c183c
+check test_mouse 0100020000010403
+check test_string 0003010000014869210003
+check test_signed fbfe05f10100010101fffb6401fbfe0100
+check test_lerp 40c080807f11
+check test_input 1b0010000100
+check test_fmt 303030303037303432323535
+check test_timer 000001000101
+check test_gesture 010000000001000100010100010000010001000100010001
+check test_assert 41
+
+# check_brk <harness> <line> <col>: the ROM must print
+# `assert failed at <path>:<line>:<col>` and then idle (BRK never
+# exits). Runs headless in the background, kills after a beat,
+# and builds the expected bytes from its own path (locations are
+# absolute). POSIX sleep/kill only — no GNU timeout.
+check_brk() {
+  name=$1
+  line=$2
+  col=$3
+  "$ETAL" -r "$ROOT/lib/$name.ux" -o "$TMPD/$name.rom" \
+    || fail "$name: assembly failed"
+  SDL_VIDEODRIVER=dummy "$ROOT/vendor/linux-x86_64/uxn2" "$TMPD/$name.rom" \
+    > "$TMPD/$name.out" 2>&1 &
+  pid=$!
+  sleep 1
+  kill "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+  got=$(od -A n -t x1 "$TMPD/$name.out" | tr -d ' \n')
+  want=$(printf 'assert failed at %s/lib/%s.ux:%s:%s\n' "$ROOT" "$name" "$line" "$col" \
+    | od -A n -t x1 | tr -d ' \n')
+  [ "$got" = "$want" ] || fail "$name: got $got want $want"
+  echo "$name ok"
+}
+check_brk test_assert_fail 5 5
+
+# check_warn <harness>: stderr must list exactly the dead-weight
+# definitions (built from this checkout's own path, since
+# locations are absolute).
+check_warn() {
+  name=$1
+  shift
+  "$ETAL" -t "$ROOT/lib/$name.ux" -o "$TMPD/$name.tal" 2> "$TMPD/$name.err" \
+    || fail "$name: compile failed"
+  {
+    while [ $# -gt 0 ]; do
+      printf 'warning: %s (%s/lib/%s.ux:%s)\n' "$1" "$ROOT" "$name" "$2"
+      shift 2
+    done
+  } > "$TMPD/$name.want"
+  cmp -s "$TMPD/$name.want" "$TMPD/$name.err" \
+    || fail "$name: warnings differ: got [$(cat "$TMPD/$name.err")]"
+  echo "$name ok"
+}
+check_warn test_warn \
+  'parens inside comment may nest and swallow code, write glyph names as words' '22:1' \
+  'discarded return value of `shown`' '20:5' \
+  'unused global `unused_g`' '6:1' \
+  'unused constant `STORED_C`' '8:1' \
+  'unused data `unused_blob`' '11:1' \
+  'unused parameter `q` in fn `show`' '12:1' \
+  'unused local `unused_l` in fn `main`' '15:1'
 check test_gfx3d 0680068079800680068079807980798029e029e0562029e029e056205620562029e029e00680068029e0562006807980562029e0798006805620562079807980fe121f09400066c91db6512540007eb940000fc981ee1f0940003ab2624a5125
+
+# check_fail <harness> <fragment>: the compile must fail with the
+# fragment on stderr (negative probes like test_event_call never
+# assemble, so check can't gate them).
+check_fail() {
+  name=$1
+  want=$2
+  err=$("$ETAL" -t "$ROOT/lib/$name.ux" -o "$TMPD/$name.tal" 2>&1) || true
+  echo "$err" | grep -q "etal: error:" \
+    || fail "$name: compiled, want failure"
+  echo "$err" | grep -qF "$want" \
+    || fail "$name: wrong error: [$err]"
+  echo "$name ok"
+}
+check_fail test_event_call 'cannot call event `vec_bad`'
+check_fail test_signed_mix 'mixed-sign arithmetic'
+check_fail test_signed_div 'signed `/` and `%` are not supported'
+check_fail test_signed_cmp 'cannot compare signed with unsigned'
+check_fail test_signed_narrow 'Type mismatch in variable declaration'

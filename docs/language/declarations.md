@@ -78,6 +78,31 @@ WIDTH :: 20;            ( inferred type, constant: address IS the value )
   zero cost. Only integer and identifier initializers carry real
   values this way.
 
+## Signed integers (`i8`, `i16`)
+
+Two's complement, same widths as the unsigned pair. `+ - *`, unary
+`-`/`~` and `==`/`!=` are bitwise-identical and just work; ordered
+comparisons (`<`, `>`, `<=`, `>=`) flip the sign bit and compare
+unsigned. `/` and `%` on signed values are compile errors — Uxn
+divides unsigned, so negatives would miscompile; branch on the sign
+first.
+
+```ux
+dx: i8 = -5;            ( negativity comes from unary minus on a literal )
+n: i8 = 5;              ( fitting positive literals work too )
+if dx < 0 { ... }       ( literals compare freely; mixed vars don't )
+w: i16 = dx;            ( widening sign-extends )
+u: u8 = dx & 255;       ( same-width bits reinterpret as unsigned )
+m: u8 mod 128 = v;      ( then k: i8 = m proves a value fits )
+```
+
+Rules of thumb: same sign widens (`i8 + i16` is `i16`); same-width
+cross-sign reinterprets as unsigned for bitwise ops only (shifts stay
+logical); everything else cross-sign is an error naming the bridge.
+`for` bounds, indices and `mod` bases stay unsigned. Returns and
+device ports are bit-exact, so a negative stored short keeps its low
+byte (ports take the bit pattern).
+
 Convention (not enforced): `::` constants are `ALL_CAPS`, like the
 `WIDTH` above; variables are `snake_case`. Locals use the same four
 forms inside functions.
@@ -106,15 +131,26 @@ budgets all 256 bytes and fails past the limit instead of overlapping.
 ```ux
 data head = [ 252 238 239 ];          ( inline bytes -> @head [ fc ee ef ] )
 data head_tile = file("assets/head.chr");  ( sprite file -> same thing )
+data blip = file("blip.wav");             ( 8-bit mono 44100Hz -> samples )
 ```
 
 Inline bytes (decimal or hex, keep them 0–255) and sprite files both
 become ROM blobs. `file()` accepts `.chr` (16 bytes/tile, 2bpp planar:
 first 8 bytes channel one, next 8 channel two) and `.icn` (8
 bytes/tile, 1bpp); sizes are validated as whole tiles at compile time
-and paths resolve relative to the declaring file. Use `&name` to take
-a blob's address (e.g. `Screen.addr = &head_tile;`). Blobs are not
-indexable — see [limitations](limitations.md).
+and paths resolve relative to the declaring file. `.wav` accepts
+canonical 8-bit mono PCM at 44100Hz — exactly what Uxn plays
+natively, so samples embed with zero conversion; anything else
+(stereo, 16-bit, other rates, non-PCM) is a compile error, never a
+silent resample. Use `&name` to take a blob's address (e.g.
+`Screen.addr = &head_tile;`, `Audio0.addr = &blip;`). Inline blobs
+also read as arrays (`head[2]`, whole-copy with `=`); file assets
+read element-wise but never whole-copy (their length is known only
+at assembly — index them). Bare blob values anywhere else are
+compile errors, not miscompiles. Arrays (and explicit `&name`
+addresses) decay into matching pointer slots — `strlen(sbuf)`,
+`p: &u8 = buf` — while plain `u16` values stay rejected, so
+address typos still fail loudly.
 
 ## Buffers and arrays
 
@@ -123,10 +159,11 @@ buffer tail[256]: u16;   ( main RAM, absolute addressed )
 grid: [64] u8;           ( small zero-page array )
 ```
 
-`buffer` reserves main-RAM space (from `0x2000` upward, sequentially)
-for anything too big for zero-page — grids, tails, tables. Small
-fixed arrays can also live in zero-page with `[N] T` globals. Both
-are read and written with identical syntax:
+`buffer` reserves main-RAM space (placed after code, assets, and
+strings; sequentially in declaration order) for anything too big for
+zero-page — grids, tails, tables. Small fixed arrays can also live in
+zero-page with `[N] T` globals. Both are read and written with
+identical syntax:
 
 ```ux
 tail[i] = nx;            ( STA/STA2 with scaled index )
@@ -134,7 +171,9 @@ v: u16 = tail[i + 1];    ( LDA/LDA2; u16 elements scale by 2 )
 ```
 
 Only global arrays and buffers are indexable; there are no array
-literals or initializers, and no bounds checks — like the hardware.
+literals, and no bounds checks — like the hardware. Same-type and
+same-length arrays copy whole with `=` (assignments and
+initializers); every other whole-array use is a compile error.
 
 ## Structs
 
@@ -148,12 +187,26 @@ pts[i].x = nx;           ( base + i*3, then +0 field offset )
 py: u8 = p.y;            ( slot address + 2 )
 ```
 
-A `struct` declares field offsets at type-check time (v1 fields are
-scalar `u8`/`u16`/`bool` — no nesting, no `mod`, no arrays). Only
-`.field` access compiles: whole struct values never touch the stack,
-so assigning, comparing, passing or returning a whole struct is a
-compile error with a field-directed message. Struct-typed variables
-take no initializer (declare bare, then assign fields); buffers of
+```ux
+Note :: struct { pitch: u8; len: u8; };
+Track :: struct { notes: [8] Note; vol: u8; };
+
+buffer tracks[4]: Track;
+t: Track;
+
+tracks[i].notes[2].pitch = 60;   ( chained: row + field + element )
+t.vol = 200;
+t = tracks[0];                   ( whole-value copy, same type )
+```
+
+A `struct` declares field offsets at type-check time (v2 fields are
+scalars, previously-declared structs, or fixed arrays of either —
+no `mod`, no pointers; order matters, so forward references and
+cycles fail as unknown types). Paths chain through nesting and
+arrays, and same-type struct values copy whole with `=` — but
+comparing, passing or returning a whole struct is still a compile
+error with a field-directed message. Struct-typed variables take no
+initializer (declare bare, then copy or assign fields); buffers of
 structs are the fix for parallel-array desync. A trailing `;` after
 the closing brace is accepted.
 
@@ -231,3 +284,21 @@ data and tables the DSL cannot express — not for smuggling control
 flow, since placement after the code means tal `%macros` pasted this
 way would land after their use sites. (A legacy bare-`raw` form reads
 to end-of-file and must stay last; prefer the block form.)
+
+Inside a function or event body, the same `raw { ... }` emits
+inline TAL where it stands — the escape hatch for odd opcodes the
+typed surface cannot reach (stack juggling, computed jumps, tal
+`%macros` defined and used in order):
+
+```ux
+main :: fn() {
+    raw { %EMIT-A { #41 #18 DEO } }
+    raw { EMIT-A }
+}
+```
+
+Inline raw is unchecked text: it must keep the stack balanced
+itself, labels inside are not freshened (keep them unique per
+function), and any raw anywhere disables dead-function elimination
+(references may hide in text). It still goes through the
+assembler, so invalid TAL fails loudly there.

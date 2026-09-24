@@ -9,21 +9,6 @@
 
 open Ast
 
-let decl_name = function
-  | FuncDecl f -> Some ("function", f.name)
-  | MacroDecl m -> Some ("macro", m.macro_name)
-  | GlobalVarDecl (n, _, _) -> Some ("global", n)
-  | GlobalInferDecl (n, _) -> Some ("global", n)
-  | GlobalConstDecl (n, _, _) -> Some ("constant", n)
-  | MetaDecl _ -> Some ("meta block", "meta")
-  | StructDecl s -> Some ("struct", s.struct_name)
-  | DeviceDecl d -> Some ("device", d.device_name)
-  | GroupDecl g -> Some ("group", g.group_name)
-  | DataDecl d -> Some ("data", d.data_name)
-  | AssetDecl a -> Some ("asset", a.asset_name)
-  | BufferDecl b -> Some ("buffer", b.buf_name)
-  | ImportDecl _ | RawDecl _ -> None
-
 (* Path handling is deliberately OS-independent pure string logic over
    forward slashes: the same .ux project must resolve identically on
    Linux/macOS/Windows, and unit tests must be able to feed Windows
@@ -118,15 +103,22 @@ let read_source path importer =
 let load_program entry =
   let entry = normalize_path (absolutize entry) in
   let defined : (string, string) Hashtbl.t = Hashtbl.create 64 in
+  let defpos : (string, Token.pos) Hashtbl.t = Hashtbl.create 64 in
+  let locs = ref [] in
   let loaded = ref [] in
-  let check_dup d path =
+  let check_dup d path dpos =
     match decl_name d with
     | Some (kind, n) ->
       if Hashtbl.mem defined n then
         failwith (Printf.sprintf
-          "duplicate definition of %s `%s` (also defined in `%s`, now in `%s`)"
-          kind n (Hashtbl.find defined n) path)
-      else Hashtbl.add defined n path
+          "duplicate definition of %s `%s` (%s, now %s)"
+          kind n
+          (Token.string_of_pos (Hashtbl.find defpos n))
+          (Token.string_of_pos dpos))
+      else begin
+        Hashtbl.add defined n path;
+        Hashtbl.add defpos n dpos
+      end
     | None -> ()
   in
   let rec load path importer visited =
@@ -137,7 +129,11 @@ let load_program entry =
     else begin
       loaded := path :: !loaded;
       let source = read_source path importer in
-      let decls = Parser.parse (Lexer.tokenize source) in
+      let tokens, poss = Lexer.tokenize_locd ~file:path source in
+      let decls, dlocs = Parser.parse_locd ~file:path tokens poss in
+      let here n =
+        try List.assoc n dlocs with Not_found -> Token.nopos in
+      locs := dlocs @ !locs;
       List.concat_map (function
         | ImportDecl { path = p } ->
           let base = dirname_fwd path in
@@ -154,12 +150,14 @@ let load_program entry =
             else { a with asset_path =
               normalize_path (concat_fwd (dirname_fwd path) a.asset_path) }
           in
-          check_dup (AssetDecl fixed) path;
+          check_dup (AssetDecl fixed) path (here a.asset_name);
           [AssetDecl fixed]
         | d ->
-          check_dup d path;
+          let n = match decl_name d with Some (_, n) -> n | None -> "" in
+          check_dup d path (here n);
           [d]
       ) decls
     end
   in
-  load entry entry []
+  let program = load entry entry [] in
+  (program, !locs)

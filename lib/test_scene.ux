@@ -1,6 +1,8 @@
-( scene + menu harness: id switching, edge polls, wraparound.
+( scene + menu harness: id switching, edge polls, wraparound,
+  pause-stack push/pop (scene+prev printed), and a crash-free
+  layered draw over two gameplay layers.
   Expected console bytes: 00 00 00 02 00 10 00 00 00 20 00 01
-  00 00 00 02 )
+  00 00 00 02 00 05 00 02 00 07 00 05 00 05 00 07 00 02 00 05 )
 device Screen 32 {
     vector: 2
     width: 2
@@ -16,6 +18,7 @@ device Screen 32 {
 import "screen.ux"
 import "scene.ux"
 import "menu.ux"
+import "object.ux"
 
 emit16 :: fn(v: u16) {
     varvara.console.write((v >> 8) & 255);
@@ -41,4 +44,19 @@ main :: fn() {
     emit16(menu_sel);
     menu_prev();
     emit16(menu_sel);
+    scene_push(5);
+    emit16(scene);
+    emit16(scene_prev);
+    scene_push(7);
+    emit16(scene);
+    emit16(scene_prev);
+    emit16(scene_pop());
+    emit16(scene_prev);
+    emit16(scene_pop());
+    emit16(scene_prev);
+    a: u16 = obj_spawn(10, 20, 100, OBJ_VISIBLE | OBJ_LAYER0);
+    ( kept for its side effect: the slot must exist for the layered draw )
+    _ = obj_spawn(30, 40, 200, OBJ_VISIBLE | OBJ_LAYER2);
+    obj_draw_mode(a, SPRITE_LAYER);
+    draw_all_layered();
 }

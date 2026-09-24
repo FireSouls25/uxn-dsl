@@ -1,0 +1,16 @@
+( lib/lerp.ux — small-range linear interpolation for animation
+  (slides, fades, easing inputs). Pure u8/u16 math, no devices.
+
+  lerp8(a, b, k, n) walks a from b as k runs 0..n:
+      (a*(n-k) + b*k) / n
+  Total for all u8 inputs: the numerator tops out at 255*n, which
+  fits u16 for every u8 n, so nothing wraps and no sign discipline
+  is needed (works either direction, a > b included). Preconditions:
+  n >= 1 (n = 0 divides by zero, which Uxn defines as zero) and
+  0 <= k <= n (past n extrapolates travelling: (n-k) wraps).
+  Frame counters (10-60) and pixel slides fit with room to spare;
+  wider ranges want fix16 (see lib/fix16.ux), not this. )
+
+lerp8 :: fn(a: u8, b: u8, k: u8, n: u8) -> u8 {
+    return (a * (n - k) + b * k) / n;
+}

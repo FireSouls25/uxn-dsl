@@ -83,6 +83,34 @@ a `BRK` inside reset-vector code returns to the emulator early and
 your `HALT` never runs. Labels are function-scoped (`&`-labels);
 gotos may only target the same function.
 
+## Discard (`_ =`)
+
+```ux
+_ = obj_spawn(10, 20, 100, flags);   ( evaluate, pop, keep going )
+```
+
+A valued call as a bare statement warns (`discarded return value` —
+usually a lost update, and for getters a leaked stack slot per call).
+When the value is genuinely unneeded but the call's side effect is
+the point, say so with `_ =`: evaluates the expression, then `POP`
+or `POP2` by width. Dropping `void` is an error (drop the call
+itself instead), as are whole structs/arrays (they never sit on the
+stack as values).
+
+## Assert
+
+```ux
+assert x == 2;   ( silent when true; prints `assert failed at
+                   file:line:col` and halts when false )
+```
+
+Self-checking harnesses without outside tooling: the condition
+(`bool`/`u8`/`u16`, like `if`) totals to one byte; on false the
+baked location prints and `BRK` aborts to the emulator — even
+inside a plain `fn`, where halting (not returning) is the point.
+Asserts in macro bodies report the macro's definition site, not
+the call site.
+
 ## Blocks and declarations
 
 ```ux

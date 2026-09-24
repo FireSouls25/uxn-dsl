@@ -1,0 +1,6 @@
+( negative probe: u8 does not implicitly become i8 (mask or mod first). )
+u: u8 = 200;
+main :: fn() {
+    x: i8 = u;
+    varvara.console.write(x);
+}

@@ -1,0 +1,20 @@
+( timer harness: arm/countdown/fire, independence, no underflow.
+  Expected console bytes: 00 00 01 00 01 01 )
+import "timer.ux"
+
+main :: fn() {
+    ( fires after exactly 3 ticks )
+    timer_set(0, 3);
+    timer_tick();
+    varvara.console.write(timer_ready(0));
+    timer_tick();
+    varvara.console.write(timer_ready(0));
+    timer_tick();
+    varvara.console.write(timer_ready(0));
+    ( slots are independent; idle timers stay ready, never wrap )
+    timer_set(1, 1);
+    varvara.console.write(timer_ready(1));
+    timer_tick();
+    varvara.console.write(timer_ready(1));
+    varvara.console.write(timer_ready(2));
+}

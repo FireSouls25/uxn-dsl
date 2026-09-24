@@ -1,0 +1,121 @@
+( lib/audio.ux — notes, a stock square wave, and one-shot SFX.
+  Uxn pitch bytes are MIDI note numbers (verified against the
+  emulator source: pitch 69 renders 441Hz; 0-107 audible, 108+
+  silent; high bit = play once, clear = loop). Samples are
+  unsigned 8-bit mono at 44100Hz, 128-center — WAV 8-bit PCM needs
+  no conversion (see `data ... file("*.wav")`).
+  Games declare the Audio device (copy this block):
+      device Audio0 48 {
+          vector: 2
+          position: 2
+          output: 1
+          pad: 3
+          adsr: 2
+          length: 2
+          addr: 2
+          volume: 1
+          pitch: 1
+      }
+  Long samples play ~1:1 at middle C (verified in the emulator:
+  advance hits unity at pitch 60), pitched up/down from there. )
+
+( stock 32-byte square wave (chiptune lead); &sq32 is its address. )
+data sq32 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255];
+
+( fire-and-forget one-shot on Audio0 (jump blips, pickups). )
+sfx :: fn(note: u8, sample: u16, len: u16, vol: u8, adsr: u16) {
+    Audio0.addr = sample;
+    Audio0.length = len;
+    Audio0.volume = vol;
+    Audio0.adsr = adsr;
+    Audio0.pitch = note;
+}
+
+( MIDI note numbers C1-B7 (C4 = 60 = middle C). )
+NOTE_C1 :: 24;
+NOTE_CS1 :: 25;
+NOTE_D1 :: 26;
+NOTE_DS1 :: 27;
+NOTE_E1 :: 28;
+NOTE_F1 :: 29;
+NOTE_FS1 :: 30;
+NOTE_G1 :: 31;
+NOTE_GS1 :: 32;
+NOTE_A1 :: 33;
+NOTE_AS1 :: 34;
+NOTE_B1 :: 35;
+NOTE_C2 :: 36;
+NOTE_CS2 :: 37;
+NOTE_D2 :: 38;
+NOTE_DS2 :: 39;
+NOTE_E2 :: 40;
+NOTE_F2 :: 41;
+NOTE_FS2 :: 42;
+NOTE_G2 :: 43;
+NOTE_GS2 :: 44;
+NOTE_A2 :: 45;
+NOTE_AS2 :: 46;
+NOTE_B2 :: 47;
+NOTE_C3 :: 48;
+NOTE_CS3 :: 49;
+NOTE_D3 :: 50;
+NOTE_DS3 :: 51;
+NOTE_E3 :: 52;
+NOTE_F3 :: 53;
+NOTE_FS3 :: 54;
+NOTE_G3 :: 55;
+NOTE_GS3 :: 56;
+NOTE_A3 :: 57;
+NOTE_AS3 :: 58;
+NOTE_B3 :: 59;
+NOTE_C4 :: 60;
+NOTE_CS4 :: 61;
+NOTE_D4 :: 62;
+NOTE_DS4 :: 63;
+NOTE_E4 :: 64;
+NOTE_F4 :: 65;
+NOTE_FS4 :: 66;
+NOTE_G4 :: 67;
+NOTE_GS4 :: 68;
+NOTE_A4 :: 69;
+NOTE_AS4 :: 70;
+NOTE_B4 :: 71;
+NOTE_C5 :: 72;
+NOTE_CS5 :: 73;
+NOTE_D5 :: 74;
+NOTE_DS5 :: 75;
+NOTE_E5 :: 76;
+NOTE_F5 :: 77;
+NOTE_FS5 :: 78;
+NOTE_G5 :: 79;
+NOTE_GS5 :: 80;
+NOTE_A5 :: 81;
+NOTE_AS5 :: 82;
+NOTE_B5 :: 83;
+NOTE_C6 :: 84;
+NOTE_CS6 :: 85;
+NOTE_D6 :: 86;
+NOTE_DS6 :: 87;
+NOTE_E6 :: 88;
+NOTE_F6 :: 89;
+NOTE_FS6 :: 90;
+NOTE_G6 :: 91;
+NOTE_GS6 :: 92;
+NOTE_A6 :: 93;
+NOTE_AS6 :: 94;
+NOTE_B6 :: 95;
+NOTE_C7 :: 96;
+NOTE_CS7 :: 97;
+NOTE_D7 :: 98;
+NOTE_DS7 :: 99;
+NOTE_E7 :: 100;
+NOTE_F7 :: 101;
+NOTE_FS7 :: 102;
+NOTE_G7 :: 103;
+NOTE_GS7 :: 104;
+NOTE_A7 :: 105;
+NOTE_AS7 :: 106;
+NOTE_B7 :: 107;
+
+( silence (pitch >= 108 renders nothing). )
+REST :: 127;

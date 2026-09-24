@@ -57,11 +57,11 @@ let rec elab_stmts env = function
 let elaborate_program program =
   let global_env = Types.create_env None in
   Types.add_func global_env "print"
-    [{ name = "msg"; typ = TypPointer TypU8 }] None;
+    [{ name = "msg"; typ = TypPointer TypU8 }] None false;
   (* Proposal 9: signatures first, so inferred initializers can call
      functions defined later in the file — mirroring the checker. *)
   List.iter (function
-    | FuncDecl f -> Types.add_func global_env f.name f.params f.return_typ
+    | FuncDecl f -> Types.add_func global_env f.name f.params f.return_typ f.is_event
     | _ -> ()) program;
   List.map (function
     | FuncDecl f as d ->
@@ -100,6 +100,14 @@ let elaborate_program program =
     | BufferDecl b as d ->
       Types.add_var global_env b.buf_name (TypArray (b.buf_elem, b.buf_len));
       d
+    | DataDecl d as x ->
+      (* Proposal 10: blobs read as arrays, so `:=` inference sees
+         through indexing into them. *)
+      Types.add_var global_env d.data_name (TypArray (TypU8, List.length d.data_bytes));
+      x
+    | AssetDecl a as x ->
+      Types.add_var global_env a.asset_name (TypArray (TypU8, 0));
+      x
     | StructDecl s as d ->
       (* Register for field-type inference below; the checker
          validates fields and order. *)

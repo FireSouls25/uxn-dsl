@@ -1,0 +1,7 @@
+( negative probe: cross-sign arithmetic needs an explicit bridge. )
+u: u8 = 200;
+b: i8 = -5;
+main :: fn() {
+    v: u8 = u + b;
+    varvara.console.write(v);
+}

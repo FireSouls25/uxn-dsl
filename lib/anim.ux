@@ -1,35 +1,105 @@
 ( lib/anim.ux — frame animation over object rows.
   Frames live in one shared u16 table (tile addresses, or plain
-  test values — the stepper only copies); each object holds a base
-  offset, length, rate and tick. Rate is frames-per-advance inverse:
-  the frame advances every `rate` ticks (rate >= 1). )
+  test values — the stepper only copies); each object holds a row
+  with base offset, length, rate, tick, mode and playing flag.
+  Rate is frames-per-advance inverse: the frame advances every
+  `rate` ticks (rate >= 1). Modes: LOOP wraps, ONCE holds the last
+  frame and stops (chain endings via anim_playing), PINGPONG
+  bounces (needs len >= 2, else frame 0). Stopped rows freeze
+  with the tile untouched. )
 
 import "object.ux"
 
+ANIM_LOOP :: 0;
+ANIM_ONCE :: 1;
+ANIM_PINGPONG :: 2;
+
+Anim :: struct {
+    base: u8;
+    len: u8;
+    rate: u8;
+    tick: u8;
+    mode: u8;
+    playing: u8;
+};
+
+buffer anims[16]: Anim;
 buffer anim_frames[64]: u16;
-buffer anim_base[16]: u8;
-buffer anim_len[16]: u8;
-buffer anim_rate[16]: u8;
-buffer anim_tick[16]: u8;
 
 anim_play :: fn(i: u16, base: u8, n: u8, rate: u8) {
-    anim_base[i] = base;
-    anim_len[i] = n;
-    anim_rate[i] = rate;
-    anim_tick[i] = 0;
+    anim_play_mode(i, base, n, rate, ANIM_LOOP);
+}
+
+anim_play_mode :: fn(i: u16, base: u8, n: u8, rate: u8, mode: u8) {
+    anims[i].base = base;
+    anims[i].len = n;
+    anims[i].rate = rate;
+    anims[i].tick = 0;
+    anims[i].mode = mode;
+    anims[i].playing = 1;
+}
+
+anim_stop :: fn(i: u16) {
+    anims[i].playing = 0;
+}
+
+anim_start :: fn(i: u16) {
+    anims[i].playing = 1;
+}
+
+anim_playing :: fn(i: u16) -> u8 {
+    return anims[i].playing;
 }
 
 anim_step :: fn(i: u16) {
-    t: u8 = anim_tick[i] + 1;
-    anim_tick[i] = t;
-    rate: u8 = anim_rate[i];
+    if anims[i].playing == 0 {
+        return;
+    }
+    t: u8 = anims[i].tick + 1;
+    anims[i].tick = t;
+    rate: u8 = anims[i].rate;
+    n: u8 = anims[i].len;
+    mode: u8 = anims[i].mode;
     frame: u8 = 0;
-    if rate != 0 {
-        frame = t / rate;
+    if mode == ANIM_ONCE {
+        f: u8 = 0;
+        if rate != 0 {
+            f = t / rate;
+        }
+        if n == 0 {
+            anims[i].playing = 0;
+        } else {
+            if f >= n {
+                f = n - 1;
+                anims[i].playing = 0;
+            }
+        }
+        frame = f;
+    } else {
+        if mode == ANIM_PINGPONG {
+            if n < 2 {
+                frame = 0;
+            } else {
+                s: u8 = 0;
+                if rate != 0 {
+                    s = t / rate;
+                }
+                span: u8 = 2 * n - 2;
+                p: u8 = s % span;
+                if p < n {
+                    frame = p;
+                } else {
+                    frame = span - p;
+                }
+            }
+        } else {
+            if rate != 0 {
+                frame = t / rate;
+            }
+            if n != 0 {
+                frame = frame % n;
+            }
+        }
     }
-    n: u8 = anim_len[i];
-    if n != 0 {
-        frame = frame % n;
-    }
-    objs[i].tile = anim_frames[anim_base[i] + frame];
+    objs[i].tile = anim_frames[anims[i].base + frame];
 }

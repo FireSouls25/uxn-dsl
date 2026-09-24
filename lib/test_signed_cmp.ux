@@ -1,0 +1,10 @@
+( negative probe: ordered comparison across signs is meaningless. )
+u: u8 = 200;
+b: i8 = -5;
+main :: fn() {
+    if u < b {
+        varvara.console.write(1);
+    } else {
+        varvara.console.write(0);
+    }
+}

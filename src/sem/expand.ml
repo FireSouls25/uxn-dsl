@@ -18,6 +18,20 @@
 
 open Ast
 
+(* Proposal 12 context, shared with the checker: macro errors point
+   at the macro (or calling function) under expansion. *)
+let failwith (msg : string) =
+  let prefix =
+    match !Types.check_ctx with
+    | Some n ->
+      (match List.assoc_opt n !Types.loc_table with
+       | Some p ->
+         let s = Token.string_of_pos p in
+         if s = "" then "" else s ^ ": "
+       | None -> "")
+    | None -> "" in
+  Stdlib.failwith (prefix ^ msg)
+
 type macro = {
   m_params : param list;
   m_return : typ option;
@@ -55,12 +69,12 @@ let rename_var rename n =
   try List.assoc n rename with Not_found -> n
 
 let rec subst_expr psubst rename = function
-  | Ident n as e ->
+  | Ident (n, p) as e ->
     (try List.assoc n psubst
      with Not_found ->
-       (try Ident (List.assoc n rename) with Not_found -> e))
-  | AddrOf n as e ->
-    (try AddrOf (List.assoc n rename) with Not_found -> e)
+       (try Ident (List.assoc n rename, p) with Not_found -> e))
+  | AddrOf (n, p) as e ->
+    (try AddrOf (List.assoc n rename, p) with Not_found -> e)
   | BinOp (op, l, r) -> BinOp (op, subst_expr psubst rename l, subst_expr psubst rename r)
   | UnOp (op, e) -> UnOp (op, subst_expr psubst rename e)
   | Call (f, args) ->
@@ -98,6 +112,8 @@ let rec subst_stmt psubst rename = function
   | Goto n -> Goto (rename_var rename n)
   | Label n -> Label (rename_var rename n)
   | RPush e -> RPush (subst_expr psubst rename e)
+  | Drop e -> Drop (subst_expr psubst rename e)
+  | Assert (e, loc) -> Assert (subst_expr psubst rename e, loc)
   | (RPop | RPeek | BrkStmt | RawStmt _) as s -> s
 
 let lookup_macro macros m =
@@ -110,6 +126,7 @@ let check_arity m (mac : macro) args =
 
 (* Substitute params, freshen bound names, then expand nested calls. *)
 let rec expand_body macros guard m (mac : macro) args =
+  Types.set_ctx m;
   incr counter;
   let id = !counter in
   let pnames = List.map (fun (p : param) -> p.name) mac.m_params in
@@ -119,7 +136,7 @@ let rec expand_body macros guard m (mac : macro) args =
   expand_stmts macros (m :: guard) body
 
 and expand_expr macros guard = function
-  | Call (Ident m, args) as e ->
+  | Call (Ident (m, _), args) as e ->
     (match lookup_macro macros m with
     | None ->
       (match e with
@@ -145,7 +162,7 @@ and expand_expr macros guard = function
   | (Ident _ | IntLit _ | StringLit _ | AddrOf _ | RawLit _) as e -> e
 
 and expand_stmt macros guard = function
-  | ExprStmt (Call (Ident m, args)) when lookup_macro macros m <> None ->
+  | ExprStmt (Call (Ident (m, _), args)) when lookup_macro macros m <> None ->
     let mac = match lookup_macro macros m with Some x -> x | None -> assert false in
     if List.mem m guard then
       failwith (Printf.sprintf "recursive macro call to `%s`" m);
@@ -182,7 +199,7 @@ and expand_stmt macros guard = function
     | (MInt n, first) :: rest ->
       incr counter;
       let tmp = "__match_" ^ string_of_int !counter in
-      let cond m = BinOp (Eq, Ident tmp, IntLit m) in
+      let cond m = BinOp (Eq, Ident (tmp, Token.nopos), IntLit (m, Token.nopos)) in
       let rec split = function
         | [] -> ([], [])
         | (MInt m, b) :: tl ->
@@ -196,6 +213,8 @@ and expand_stmt macros guard = function
   | InferDecl (n, e) -> [InferDecl (n, expand_expr macros guard e)]
   | ConstDecl (n, t, e) -> [ConstDecl (n, t, expand_expr macros guard e)]
   | RPush e -> [RPush (expand_expr macros guard e)]
+  | Drop e -> [Drop (expand_expr macros guard e)]
+  | Assert (e, loc) -> [Assert (expand_expr macros guard e, loc)]
   | (Goto _ | Label _ | RPop | RPeek | BrkStmt | RawStmt _) as s -> [s]
 
 and opt_expand macros guard = function
@@ -210,6 +229,7 @@ let expand_program program =
   let macros = ref [] in
   List.iter (function
     | MacroDecl m ->
+      Types.set_ctx m.macro_name;
       if List.mem_assoc m.macro_name !macros then
         failwith (Printf.sprintf "duplicate macro `%s`" m.macro_name);
       macros := (m.macro_name,
@@ -219,7 +239,7 @@ let expand_program program =
   let macros = !macros in
   List.concat_map (function
     | MacroDecl _ -> []
-    | FuncDecl f -> [FuncDecl { f with body = expand_stmts macros [] f.body }]
+    | FuncDecl f -> Types.set_ctx f.name; [FuncDecl { f with body = expand_stmts macros [] f.body }]
     | GlobalVarDecl (n, t, i) -> [GlobalVarDecl (n, t, opt_expand macros [] i)]
     | GlobalInferDecl (n, e) -> [GlobalInferDecl (n, expand_expr macros [] e)]
     | GlobalConstDecl (n, t, e) -> [GlobalConstDecl (n, t, expand_expr macros [] e)]

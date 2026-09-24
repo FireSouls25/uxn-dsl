@@ -1,5 +1,26 @@
 (* Token types for Etal lexer *)
 
+(* Source position (proposal 12): every error message starts with
+   `file:line:col`. The lexer tracks line/col already; positions ride
+   a parallel array (not the token type), so no parser match site
+   changes. Empty file = legacy path (no prefix). *)
+type pos = {
+  pfile : string;
+  pline : int;
+  pcol : int;
+}
+
+let nopos = { pfile = ""; pline = 0; pcol = 0 }
+
+let string_of_pos p =
+  if p.pfile = "" then ""
+  else Printf.sprintf "%s:%d:%d" p.pfile p.pline p.pcol
+
+(* Prefix a message, omitting the empty position. *)
+let at_pos p msg =
+  let s = string_of_pos p in
+  if s = "" then msg else s ^ ": " ^ msg
+
 type token =
   (* Literals *)
   | INT_LITERAL of int
@@ -8,6 +29,7 @@ type token =
   
   (* Keywords *)
   | FN
+  | ASSERT
   | EVENT
   | RETURN
   | IF
@@ -39,6 +61,8 @@ type token =
   (* Types *)
   | U8
   | U16
+  | I8
+  | I16
   | BOOL
   | BYTE
   | SHORT
@@ -103,6 +127,7 @@ let token_to_string = function
   | STRING_LITERAL s -> Printf.sprintf "\"%s\"" s
   | IDENT s -> s
   | FN -> "fn"
+  | ASSERT -> "assert"
   | EVENT -> "event"
   | RETURN -> "return"
   | IF -> "if"
@@ -132,6 +157,8 @@ let token_to_string = function
   | BRK -> "brk"
   | U8 -> "u8"
   | U16 -> "u16"
+  | I8 -> "i8"
+  | I16 -> "i16"
   | BOOL -> "bool"
   | BYTE -> "byte"
   | SHORT -> "short"

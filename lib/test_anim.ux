@@ -1,6 +1,10 @@
 ( animation harness: frame selection over ticks (rate 2 over
-  3 frames of test values, so ticks 1..6 read 100,200,200,300,300,100).
-  Expected console bytes: 00 64 00 c8 00 c8 01 2c 01 2c 00 64 )
+  3 frames of test values, so ticks 1..6 read 100,200,200,300,300,100);
+  then ONCE (holds the last frame and stops), PINGPONG (bounces),
+  and stop/start freezing.
+  Expected console bytes: 00 64 00 c8 00 c8 01 2c 01 2c 00 64
+  00 16 00 21 00 21 00 00 00 21 00 37 00 42 00 37 00 2c 00 37
+  00 64 00 64 00 00 00 c8 00 01 )
 import "anim.ux"
 
 emit16 :: fn(v: u16) {
@@ -26,4 +30,42 @@ main :: fn() {
     emit16(objs[i].tile);
     anim_step(i);
     emit16(objs[i].tile);
+    anim_frames[10] = 11;
+    anim_frames[11] = 22;
+    anim_frames[12] = 33;
+    anim_play_mode(i, 10, 3, 1, ANIM_ONCE);
+    anim_step(i);
+    emit16(objs[i].tile);
+    anim_step(i);
+    emit16(objs[i].tile);
+    anim_step(i);
+    emit16(objs[i].tile);
+    emit16(anim_playing(i));
+    anim_step(i);
+    emit16(objs[i].tile);
+    anim_frames[20] = 44;
+    anim_frames[21] = 55;
+    anim_frames[22] = 66;
+    anim_play_mode(i, 20, 3, 1, ANIM_PINGPONG);
+    anim_step(i);
+    emit16(objs[i].tile);
+    anim_step(i);
+    emit16(objs[i].tile);
+    anim_step(i);
+    emit16(objs[i].tile);
+    anim_step(i);
+    emit16(objs[i].tile);
+    anim_step(i);
+    emit16(objs[i].tile);
+    anim_play(i, 0, 3, 2);
+    anim_step(i);
+    emit16(objs[i].tile);
+    anim_stop(i);
+    anim_step(i);
+    emit16(objs[i].tile);
+    emit16(anim_playing(i));
+    anim_start(i);
+    anim_step(i);
+    emit16(objs[i].tile);
+    emit16(anim_playing(i));
 }

@@ -12,7 +12,20 @@ grid_pos: u16 mod 16 = 15;
 
 Pt :: struct { x: u8; y: u8; };
 
+Nib :: struct { lo: u8; hi: u8; };
+Pair :: struct { n: Nib; tag: u8; hist: [2] u8; };
+
 buffer pts[2]: Pt;
+
+pair0: Pair;
+pair1: Pair;
+
+grid_a: [4] u8;
+grid_b: [4] u8;
+
+data blip = file("blip.wav");
+
+baddr: u16 = &blip;
 
 main :: fn() {
     m: u16 = mod16(17, 5);
@@ -20,10 +33,12 @@ main :: fn() {
     cells[0] = 65;
     cells[1] = 66;
     total: u16 = m + d;
+    K :: 4;
+    CAP : u16 : 10;
     for i in 0..2 {
         cells[i + 2] = 48 + i;
     }
-    while total > 30 {
+    while total > CAP {
         total = total - 1;
     }
     step := 3;
@@ -31,8 +46,6 @@ main :: fn() {
     grid_pos = grid_pos - 20;
     w: u16 mod 8 = 7;
     w += 3;
-    K :: 4;
-    CAP : u16 : 10;
     pts[0].x = 3;
     pts[1].y = 4;
     ok: u8 = 0;
@@ -56,6 +69,23 @@ main :: fn() {
     varvara.console.write(48 + late(1));
     varvara.console.write(48 + ok);
     varvara.console.write(48 + -ng);
+    varvara.console.write(48 + baddr - &blip);
+    pair0.n.lo = 1;
+    pair0.n.hi = 2;
+    pair0.tag = 3;
+    pair0.hist[1] = 4;
+    pair1 = pair0;
+    varvara.console.write(48 + pair1.n.lo + pair1.n.hi + pair1.tag + pair1.hist[1]);
+    varvara.console.write("AB"[1]);
+    grid_a[0] = 7;
+    grid_a[1] = 8;
+    grid_a[2] = 9;
+    grid_a[3] = 10;
+    grid_b = grid_a;
+    varvara.console.write(48 + grid_b[0] + grid_b[1] + grid_b[2] + grid_b[3] - 34);
+    raw { %EMIT-A { #41 #18 DEO } }
+    raw { EMIT-A }
+    varvara.console.write(blip[8]);
 }
 
 late :: fn(x: u16) -> u16 {

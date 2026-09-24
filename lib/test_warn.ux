@@ -1,0 +1,26 @@
+( warnings probe: every dead-weight kind plus a used control
+  for each. The gate builds the expected lines from its own path,
+  so keep this layout stable: unused_g 6, STORED_C 8, unused_blob
+  11, show 12, main 15. FREE_C is free and must NOT warn. )
+used_g: u16 = 1;
+unused_g: u16 = 2;
+FREE_C :: 3;
+STORED_C : u8 : 4;
+USED_S : u8 : 5;
+data used_blob = [1, 2];
+data unused_blob = [3, 4];
+show :: fn(p: u16, q: u16) -> u16 {
+    return p + used_g + USED_S;
+}
+main :: fn() {
+    v: u16 = show(used_g, 1);
+    unused_l: u8 = 1;
+    w: u16 = &used_blob;
+    varvara.console.write(v + w);
+    shown(1);
+}
+( paren-glyph style demo ( ( ) ) end )
+after_trap: u8 = 7;
+shown :: fn(v: u16) -> u16 {
+    return v + 1 + after_trap;
+}

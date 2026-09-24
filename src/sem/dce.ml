@@ -21,7 +21,7 @@
 open Ast
 
 let rec called_in_expr acc = function
-  | Call (Ident f, args) ->
+  | Call (Ident (f, _), args) ->
     List.fold_left called_in_expr (f :: acc) args
   | Call (f, args) ->
     List.fold_left called_in_expr acc (f :: args)
@@ -34,7 +34,7 @@ let rec called_in_expr acc = function
   | _ -> acc
 
 let rec addrs_in_expr acc = function
-  | AddrOf n -> n :: acc
+  | AddrOf (n, _) -> n :: acc
   | Call (f, args) -> List.fold_left addrs_in_expr acc (f :: args)
   | BinOp (_, l, r) -> addrs_in_expr (addrs_in_expr acc l) r
   | UnOp (_, e) -> addrs_in_expr acc e
@@ -45,7 +45,8 @@ let rec addrs_in_expr acc = function
   | _ -> acc
 
 let rec called_in_stmt (acc : string list) : stmt -> string list = function
-  | ExprStmt e | Return (Some e) | RPush e -> called_in_expr acc e
+  | ExprStmt e | Return (Some e) | RPush e | Drop e -> called_in_expr acc e
+  | Assert (e, _) -> called_in_expr acc e
   | Return None | BrkStmt | Goto _ | Label _ | RPop | RPeek | RawStmt _ -> acc
   | If (c, t, elifs, e) ->
     let acc = called_in_expr acc c in
@@ -71,7 +72,8 @@ and called_in_stmts (acc : string list) (ss : stmt list) : string list =
   List.fold_left called_in_stmt acc ss
 
 let rec addrs_in_stmt acc = function
-  | ExprStmt e | Return (Some e) | RPush e -> addrs_in_expr acc e
+  | ExprStmt e | Return (Some e) | RPush e | Drop e -> addrs_in_expr acc e
+  | Assert (e, _) -> addrs_in_expr acc e
   | Return None | BrkStmt | Goto _ | Label _ | RPop | RPeek | RawStmt _ -> acc
   | If (c, t, elifs, e) ->
     let acc = addrs_in_expr acc c in
@@ -103,7 +105,8 @@ let rec has_raw_expr = function
 
 let rec has_raw_stmt = function
   | RawStmt _ -> true
-  | ExprStmt e | Return (Some e) | RPush e -> has_raw_expr e
+  | ExprStmt e | Return (Some e) | RPush e | Drop e -> has_raw_expr e
+  | Assert (e, _) -> has_raw_expr e
   | If (c, t, elifs, e) ->
     has_raw_expr c || List.exists has_raw_stmt t
     || List.exists (fun (c, b) -> has_raw_expr c || List.exists has_raw_stmt b) elifs

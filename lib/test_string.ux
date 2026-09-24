@@ -1,0 +1,23 @@
+( string harness: lengths, equality (equal, prefix-longer,
+  prefix-shorter, empty), a copy round-trip, and buffer-to-pointer
+  decay (`strlen(sbuf)`).
+  Expected console bytes: 00 03 01 00 00 01 48 69 21 00 03 )
+import "string.ux"
+
+sbuf: [16] u8;
+greet: &u8 = "Hi!";
+
+main :: fn() {
+    varvara.console.write(strlen(""));
+    varvara.console.write(strlen("Hi!"));
+    varvara.console.write(streq("ab", "ab"));
+    varvara.console.write(streq("ab", "a"));
+    varvara.console.write(streq("a", "ab"));
+    varvara.console.write(streq("", ""));
+    strcopy(sbuf, greet);
+    varvara.console.write(sbuf[0]);
+    varvara.console.write(sbuf[1]);
+    varvara.console.write(sbuf[2]);
+    varvara.console.write(sbuf[3]);
+    varvara.console.write(strlen(sbuf));
+}

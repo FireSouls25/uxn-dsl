@@ -33,9 +33,18 @@ exactly this against real ROMs.
 Globals reserve zero-page bytes sequentially from `$00`; the
 compiler counts all 256 and fails past the limit. Locals (including
 parameters and `for` variables) live in the same zero-page under
-mangled names (`step__nx`), which is why functions of any size work
-— relative `LDR/STR` addressing (limited to ±127 bytes) is never
-used. The price is static storage: no recursion, no reentrancy.
+mangled names (`fn3__nx` — the function alias, see below), which is
+why functions of any size work — relative `LDR/STR` addressing
+(limited to ±127 bytes) is never used. The price is static storage:
+no recursion, no reentrancy.
+
+Functions assemble as short labels (`@fn0`, `@fn1`, ... in program
+order) with the real name in the header comment (`@fn3 ( draw_pos
+-- )`). Drifblim stores every `scope/sub` label name in a fixed
+`$4800` (18,432-byte) dictionary, and long function names repeat on
+every branch label — full names overflow it on large programs
+(chess hit `Symbols exceeded` at ~20KB). Kept readable: data, blob,
+buffer, device and string names still assemble verbatim.
 
 Integer constants are labels placed at their own address, so `;name`
 pushes the value for free. Identifier constants alias addresses;
@@ -44,9 +53,14 @@ anything else degrades to `|0000`.
 ## Control flow labels
 
 All generated labels are function-scoped `&`-labels with per-function
-counters (`if_then_1`, `while_cont_2`, `for_end_3`, `print_4`), so
-nested and sequential constructs can never collide. User `label`/`goto`
-compile straight to `&`/`!&` in the same scope.
+counters (`it1`, `wc2`, `fx3`, `pt4` — short stems for the same
+dictionary reason as above), so nested and sequential constructs can
+never collide. User `label`/`goto` compile straight to `&`/`!&` in
+the same scope: avoid the generated stems (`it ie ix et ee wl wc wx
+fr fc fx fv ak al pt` plus a counter) or assembly fails on the
+duplicate. Generated names starting with one hex letter plus digits
+are also avoided (`fn` prefix) — drifblim rejects hex-looking labels
+(`Name invalid`).
 
 ## Devices, sprites and the screen
 

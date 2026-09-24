@@ -6,22 +6,53 @@ open Ast
 type parser_state = {
   tokens: token list;
   mutable pos: int;
+  (* Proposal 12: parallel positions (empty = legacy path, e.g. unit
+     probes). peek/advance record the last touched token; the
+     shadowed failwith below prefixes every error with it — no
+     per-site edits. dlocs maps top-level names to decl starts. *)
+  locs: pos array;
+  file: string;
+  mutable dlocs: (string * pos) list;
 }
 
-let create_parser tokens = {
-  tokens;
-  pos = 0;
-}
+let last_loc = ref nopos
+
+let failwith msg = Stdlib.failwith (at_pos !last_loc msg)
+
+let create_parser ?(file="") ?(locs=[||]) tokens =
+  last_loc := { pfile = file; pline = 1; pcol = 1 };
+  {
+    tokens;
+    pos = 0;
+    locs;
+    file;
+    dlocs = [];
+  }
+
+let loc_at parser i =
+  if i >= 0 && i < Array.length parser.locs then Some parser.locs.(i)
+  else None
 
 let peek parser =
+  (match loc_at parser parser.pos with
+   | Some l -> last_loc := l
+   | None -> ());
   if parser.pos < List.length parser.tokens then
     List.nth parser.tokens parser.pos
   else
     EOF
 
+let peek_pos parser =
+  match loc_at parser parser.pos with
+  | Some l -> l
+  | None -> { pfile = parser.file; pline = 0; pcol = 0 }
+
 let advance parser =
   if parser.pos < List.length parser.tokens then begin
     let token = List.nth parser.tokens parser.pos in
+    (match loc_at parser parser.pos with
+     | Some l -> last_loc := l
+     | None -> ());
     parser.pos <- parser.pos + 1;
     token
   end else
@@ -47,6 +78,8 @@ let rec parse_typ parser =
     match peek parser with
     | U8 -> ignore (advance parser); TypU8
     | U16 -> ignore (advance parser); TypU16
+    | I8 -> ignore (advance parser); TypI8
+    | I16 -> ignore (advance parser); TypI16
     | BOOL -> ignore (advance parser); TypBool
     | LBRACKET ->
       ignore (advance parser);
@@ -86,14 +119,17 @@ let rec parse_typ parser =
 and parse_primary parser =
   match peek parser with
   | INT_LITERAL n ->
+    let loc = peek_pos parser in
     ignore (advance parser);
-    IntLit n
+    IntLit (n, loc)
   | STRING_LITERAL s ->
+    let loc = peek_pos parser in
     ignore (advance parser);
-    StringLit s
+    StringLit (s, loc)
   | IDENT s ->
+    let loc = peek_pos parser in
     ignore (advance parser);
-    Ident s
+    Ident (s, loc)
   | LPAREN ->
     ignore (advance parser);
     let expr = parse_expr parser in
@@ -230,11 +266,12 @@ and parse_mul_div parser =
 and parse_unary parser =
   match peek parser with
   | AMPERSAND ->
+    let loc = peek_pos parser in
     ignore (advance parser);
     (match peek parser with
     | IDENT s ->
       ignore (advance parser);
-      AddrOf s
+      AddrOf (s, loc)
     | _ -> failwith "Expected identifier after &")
   | MINUS ->
     ignore (advance parser);
@@ -417,6 +454,13 @@ and parse_stmt parser =
     ignore (advance parser);
     expect parser SEMICOLON;
     RPeek
+  | UNDERSCORE ->
+    (* `_ = expr;`: explicit discard (see Drop). *)
+    ignore (advance parser);
+    expect parser ASSIGN;
+    let expr = parse_expr parser in
+    expect parser SEMICOLON;
+    Drop expr
   | LBRACE ->
     ignore (advance parser);
     let body = parse_stmts parser in
@@ -424,8 +468,9 @@ and parse_stmt parser =
     Block body
   | IDENT _ ->
     let saved_pos = parser.pos in
+    let loc = peek_pos parser in
     let name = expect_ident parser in
-    let left = ref (Ident name) in
+    let left = ref (Ident (name, loc)) in
     let rec parse_field_chain () =
       match peek parser with
       | DOT ->
@@ -445,7 +490,7 @@ and parse_stmt parser =
     (match peek parser with
     | COLON ->
       (match !left with
-      | Ident id ->
+      | Ident (id, _) ->
         ignore (advance parser);
         let typ = parse_typ parser in
         (match peek parser with
@@ -471,7 +516,7 @@ and parse_stmt parser =
     | COLON_ASSIGN ->
       (* `name := value`: inferred-type mutable. *)
       (match !left with
-      | Ident id ->
+      | Ident (id, _) ->
         ignore (advance parser);
         let value = parse_expr parser in
         expect parser SEMICOLON;
@@ -484,7 +529,7 @@ and parse_stmt parser =
     | DOUBLE_COLON ->
       (* `name :: value`: inferred-type constant. *)
       (match !left with
-      | Ident id ->
+      | Ident (id, _) ->
         ignore (advance parser);
         let value = parse_expr parser in
         expect parser SEMICOLON;
@@ -523,6 +568,22 @@ and parse_stmt parser =
       let expr = parse_expr parser in
       expect parser SEMICOLON;
       ExprStmt expr)
+  | ASSERT ->
+    (* `assert expr;`: the keyword position bakes into the node for
+       the failure message (proposal 11+12). *)
+    let loc =
+      match string_of_pos (peek_pos parser) with
+      | "" -> "?"
+      | s -> s in
+    ignore (advance parser);
+    let expr = parse_expr parser in
+    expect parser SEMICOLON;
+    Assert (expr, loc)
+  | RAW_BLOCK s ->
+    (* `raw { ... }` in a body: inline TAL, emitted where it stands
+       (top-level `raw {}` still lands in the data section). *)
+    ignore (advance parser);
+    RawStmt s
   | _ ->
     let expr = parse_expr parser in
     expect parser SEMICOLON;
@@ -783,7 +844,8 @@ let parse_decl parser =
       | EVENT -> ignore (advance parser); parse_func parser name true
       | STRUCT ->
         (* `Point :: struct { x: u16; y: u16 }`: field offsets derive
-           from field sizes; v1 fields are scalar (checked later). *)
+           from field sizes; v2 fields are scalars, nested structs,
+           or fixed arrays of either (checked later). *)
         ignore (advance parser);
         expect parser LBRACE;
         let fields = ref [] in
@@ -847,7 +909,11 @@ let parse_program parser =
     match peek parser with
     | EOF -> List.rev decls
     | _ ->
+      let start = peek_pos parser in
       let decl = parse_decl parser in
+      (match decl_name decl with
+       | Some (_, n) -> parser.dlocs <- (n, start) :: parser.dlocs
+       | None -> ());
       loop (decl :: decls)
   in
   loop []
@@ -855,3 +921,10 @@ let parse_program parser =
 let parse tokens =
   let parser = create_parser tokens in
   parse_program parser
+
+(* Located parse (proposal 12): declarations plus top-level
+   name -> decl-start positions for later passes. *)
+let parse_locd ~file tokens locs =
+  let parser = create_parser ~file ~locs tokens in
+  let decls = parse_program parser in
+  (decls, List.rev parser.dlocs)

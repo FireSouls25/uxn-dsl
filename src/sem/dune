@@ -4,4 +4,4 @@
  (package etal)
  (wrapped false)
   (modules types expand elab dce)
- (libraries etal_parser))
+ (libraries etal_lexer etal_parser))

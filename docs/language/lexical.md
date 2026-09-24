@@ -17,6 +17,14 @@ comment. A lone `/` is always the division operator — only `//`
 starts a line comment. Unterminated constructs fail loudly instead of
 silently eating the file.
 
+Paren *glyph names* inside comments are a footgun: `( ( )` nests (the
+inner `(` opens a level), so the comment swallows the rest of the
+line — a whole font row vanished this way and every later glyph
+rendered shifted by one (`CHESS` came out as `DIFTT`). Name them with
+words instead (`( lparen )`, `( rparen )`); the lexer now warns on an
+inner paren group holding only whitespace, which is exactly the trap
+shape (balanced remarks like `(see foo(x))` stay quiet).
+
 ## Literals
 
 | Form | Type | Example |
@@ -38,7 +46,7 @@ digit). These words are reserved:
 ```
 fn event return if elif else while for in match let mod meta struct
 import raw macro buffer device goto data group label
-rpush rpop rpeek brk
+rpush rpop rpeek brk assert
 u8 u16 bool byte short
 true false
 ```

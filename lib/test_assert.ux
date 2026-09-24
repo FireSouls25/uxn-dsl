@@ -1,0 +1,11 @@
+( assert harness: passing asserts are silent no-ops; the marker
+  proves execution continued. The failing path (message + halt)
+  is gated by check_brk below.
+  Expected console bytes: 41 )
+main :: fn() {
+    x: u8 = 5;
+    assert x == 5;
+    assert x != 6;
+    assert 1 == 1;
+    varvara.console.write(65);
+}

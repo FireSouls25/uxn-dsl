@@ -1,0 +1,118 @@
+( lib/song.ux — four-voice tick sequencer (one Track per Audio
+  voice), firing Audio0-3. Fill `tracks` in game setup, then call
+  `song_tick()` (voice 0) or `song_tick_all()` per frame (lengths
+  are in ticks). Needs the Audio devices the fired voices use
+  (Audio0 block in audio.ux header; Audio1-3 are the same block at
+  pages 64/80/96); import audio.ux for notes. v2 replaces the
+  single-song API (`song`, `song_next`, `song_fire` are gone —
+  `tracks[0]` is the old song). )
+
+import "audio.ux"
+
+Note :: struct { pitch: u8; len: u8; };
+
+Track :: struct {
+    notes: [24] Note;
+    len: u8;
+    pos: u8;
+    wait: u8;
+    sample: u16;
+    slen: u16;
+    vol: u8;
+    adsr: u16;
+};
+
+buffer tracks[4]: Track;
+
+( Advance voice t one tick; returns the fired pitch, or REST (127)
+  on waiting ticks, when len is 0, or when t > 3. Touches no ports
+  — headless-testable; the demo proves the audible half. )
+track_next :: fn(t: u16) -> u8 {
+    if t > 3 {
+        return 127;
+    }
+    if tracks[t].len == 0 {
+        return 127;
+    }
+    if tracks[t].wait != 0 {
+        tracks[t].wait = tracks[t].wait - 1;
+        return 127;
+    }
+    p: u8 = tracks[t].notes[tracks[t].pos].pitch;
+    l: u8 = tracks[t].notes[tracks[t].pos].len;
+    if l == 0 {
+        l = 1;
+    }
+    tracks[t].wait = l - 1;
+    tracks[t].pos = tracks[t].pos + 1;
+    if tracks[t].pos >= tracks[t].len {
+        tracks[t].pos = 0;
+    }
+    return p;
+}
+
+( Fire-and-forget attacks, one macro per voice (macros, so only
+  fired voices need their device declared). )
+macro track_fire0(pitch: u8) {
+    Audio0.addr = tracks[0].sample;
+    Audio0.length = tracks[0].slen;
+    Audio0.volume = tracks[0].vol;
+    Audio0.adsr = tracks[0].adsr;
+    Audio0.pitch = pitch;
+}
+
+macro track_fire1(pitch: u8) {
+    Audio1.addr = tracks[1].sample;
+    Audio1.length = tracks[1].slen;
+    Audio1.volume = tracks[1].vol;
+    Audio1.adsr = tracks[1].adsr;
+    Audio1.pitch = pitch;
+}
+
+macro track_fire2(pitch: u8) {
+    Audio2.addr = tracks[2].sample;
+    Audio2.length = tracks[2].slen;
+    Audio2.volume = tracks[2].vol;
+    Audio2.adsr = tracks[2].adsr;
+    Audio2.pitch = pitch;
+}
+
+macro track_fire3(pitch: u8) {
+    Audio3.addr = tracks[3].sample;
+    Audio3.length = tracks[3].slen;
+    Audio3.volume = tracks[3].vol;
+    Audio3.adsr = tracks[3].adsr;
+    Audio3.pitch = pitch;
+}
+
+( Only attacks touch the ports: sustain ticks let the voice ring
+  through its envelope tail, so quarters sound longer than 8ths.
+  A tabled REST (127) likewise sustains — rests are gaps between
+  envelopes, not hard stops. )
+song_tick :: fn() {
+    p: u8 = track_next(0);
+    if p != REST {
+        track_fire0(p);
+    }
+}
+
+( All four voices. A macro, so only games that call it need all
+  four Audio devices declared — a statement macro, like the fires. )
+macro song_tick_all() {
+    p0: u8 = track_next(0);
+    if p0 != REST {
+        track_fire0(p0);
+    }
+    p1: u8 = track_next(1);
+    if p1 != REST {
+        track_fire1(p1);
+    }
+    p2: u8 = track_next(2);
+    if p2 != REST {
+        track_fire2(p2);
+    }
+    p3: u8 = track_next(3);
+    if p3 != REST {
+        track_fire3(p3);
+    }
+}

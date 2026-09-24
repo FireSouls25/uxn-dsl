@@ -1,4 +1,5 @@
-(* Native unix bundle backend: sh stub + tar.gz payload.
+(* Native bundle backends: unix rows use a sh stub + tar.gz payload,
+ * the Windows row uses a plain zip (uxn2.exe + game.rom + run.bat).
  *
  * Output is a self-contained executable: the vendored uxn vm plus the
  * assembled ROM. Running it launches the ROM in the vm. Extra
@@ -32,10 +33,54 @@ let host_row : string Lazy.t = lazy (
     | _ -> "linux-x86_64")
 )
 
+(* Explicit bundle rows: the .rom is portable, only the VM half varies
+   (see vendor/BUILD.md). `native` means the host row below; any other
+   row can be bundled from any host — assembly still runs under the
+   host VM, only the packaged binary comes from the target row. This is
+   what lets one Linux backend serve all download options. *)
+let known_rows = [
+  "linux-x86_64";
+  "linux-aarch64";
+  "macos-arm64";
+  "macos-x86_64";
+  "windows-x86_64";
+]
+
+let is_windows_row row =
+  row = "windows-x86_64"
+
+let uxn_binary_name row =
+  if is_windows_row row then "uxn2.exe" else "uxn2"
+
+(* Resolve the vendored VM for an explicit row. The binary name is
+   per-row (uxn2.exe on Windows); a legacy bare `uxn2` next to the
+   row dir is also accepted so half-populated checkouts keep working.
+   Missing rows fail naming the wanted path (backend maps this to a
+   410/501 "target not vendored yet", not a crash). *)
+let uxn2_path_for_row row =
+  let names =
+    if is_windows_row row then [ "uxn2.exe"; "uxn2" ]
+    else [ "uxn2" ]
+  in
+  let candidates =
+    List.concat_map (fun name ->
+      List.map
+        (fun v -> Filename.concat (Filename.concat v row) name)
+        (Target.vendor_candidates ()))
+      names
+  in
+  let rec find = function
+    | [] ->
+      failwith (Printf.sprintf
+        "no vendored uxn2 for target `%s` (want vendor/%s/%s next to etal; see vendor/BUILD.md)"
+        row row (uxn_binary_name row))
+    | p :: ps -> if Sys.file_exists p then p else find ps
+  in
+  find candidates
+
 (* Per-OS VM rows. The host row comes first; the Linux row stays as a
    legacy fallback (plus resolve_tool's checkout fallbacks), so older
-   layouts keep working. A missing host row fails with the expected
-   path instead of a cryptic exec error. *)
+   layouts keep working. *)
 let default_uxn2_path () =
   let row = Lazy.force host_row in
   let in_row r =
@@ -44,17 +89,12 @@ let default_uxn2_path () =
       (Target.vendor_candidates ())
   in
   let candidates =
-    in_row row
+    (try [uxn2_path_for_row row] with Failure _ -> [])
     @ (if row = "linux-x86_64" then [] else in_row "linux-x86_64")
     @ [Target.resolve_tool "uxn2"]
   in
   let rec find = function
-    | [] ->
-      if row = "linux-x86_64" then Target.resolve_tool "uxn2"
-      else
-        failwith (Printf.sprintf
-          "no vendored uxn2 for this host (want vendor/%s/uxn2 next to etal; see vendor/BUILD.md)"
-          row)
+    | [] -> uxn2_path_for_row row
     | p :: ps -> if Sys.file_exists p then p else find ps
   in
   find candidates
@@ -140,3 +180,56 @@ let bundle ~verbose ~uxn2_path ~rom_path ~output_file =
   ignore (Sys.command (sprintf "rm -rf %s" (Filename.quote stage)));
   let rc_chmod = Sys.command (sprintf "chmod +x %s" (Filename.quote output_file)) in
   if rc_chmod <> 0 then (eprintf "Error: chmod +x failed\n"; exit 1)
+
+(* Windows carrier: plain zip (no sh stub — cmd.exe cannot run it).
+   Contains uxn2.exe (+ SDL2.dll when vendored beside it), game.rom
+   and run.bat (`uxn2.exe game.rom %*`). Windows finds DLLs next to
+   the executable, so co-shipping the DLL removes the install step
+   (see vendor/BUILD.md). Requires `zip` at bundle time. *)
+let bundle_windows_zip ~verbose ~row ~uxn2_path ~rom_path ~output_file =
+  let stage = Filename.temp_file "etal-stage" "" in
+  Sys.remove stage;
+  let rc_mkdir = Sys.command (sprintf "mkdir -p %s" (Filename.quote stage)) in
+  if rc_mkdir <> 0 then (eprintf "Error: cannot create staging dir\n"; exit 1);
+  (try
+    Target.copy_file uxn2_path (Filename.concat stage "uxn2.exe");
+    Target.copy_file rom_path (Filename.concat stage "game.rom");
+    (* Co-ship the SDL2 DLL when the row vendors one. *)
+    List.iter (fun dll ->
+      let src = Filename.concat (Filename.dirname uxn2_path) dll in
+      if Sys.file_exists src then begin
+        Target.copy_file src (Filename.concat stage dll);
+        if verbose then eprintf "Co-shipping %s\n" dll
+      end)
+      [ "SDL2.dll"; "SDL2d.dll" ];
+    let bat = Filename.concat stage "run.bat" in
+    let oc = open_out_bin bat in
+    output_string oc "@echo off\r\n\"%~dp0uxn2.exe\" \"%~dp0game.rom\" %*\r\n";
+    close_out oc;
+    List.iter (fun f ->
+      ignore (Sys.command (sprintf "touch -t 200001010000 %s"
+        (Filename.quote (Filename.concat stage f)))))
+      [ "uxn2.exe"; "game.rom"; "run.bat" ];
+    let rc_zip = Sys.command (sprintf "cd %s && zip -j -X %s uxn2.exe game.rom run.bat %s >/dev/null"
+      (Filename.quote stage) (Filename.quote output_file)
+      (String.concat " " (List.filter (fun dll ->
+        Sys.file_exists (Filename.concat stage dll)) [ "SDL2.dll"; "SDL2d.dll" ]))) in
+    if rc_zip <> 0 then (eprintf "Error: zip failed (is zip installed?)\n"; exit 1);
+    if verbose then eprintf "Wrote windows bundle for row %s to %s\n" row output_file
+  with e ->
+    ignore (Sys.command (sprintf "rm -rf %s" (Filename.quote stage)));
+    raise e);
+  ignore (Sys.command (sprintf "rm -rf %s" (Filename.quote stage)))
+
+(* Bundle for an explicit row. Unix rows reuse the sh+tar.gz carrier
+   with that row's VM; the Windows row uses the zip carrier. *)
+let bundle_for_row ~verbose ~row ~rom_path ~output_file =
+  if not (List.mem row known_rows) then
+    failwith (Printf.sprintf "unknown native row `%s` (want one of: %s)"
+      row (String.concat ", " known_rows));
+  let uxn2_path = uxn2_path_for_row row in
+  if verbose then eprintf "Using uxn2 row %s: %s\n" row uxn2_path;
+  if is_windows_row row then
+    bundle_windows_zip ~verbose ~row ~uxn2_path ~rom_path ~output_file
+  else
+    bundle ~verbose ~uxn2_path ~rom_path ~output_file

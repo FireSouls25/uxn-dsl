@@ -1,0 +1,12 @@
+( lerp harness: endpoints, midpoint both directions, odd division
+  truncation. Expected console bytes: 40 c0 80 80 7f 11 )
+import "lerp.ux"
+
+main :: fn() {
+    varvara.console.write(lerp8(64, 192, 0, 10));
+    varvara.console.write(lerp8(64, 192, 10, 10));
+    varvara.console.write(lerp8(64, 192, 5, 10));
+    varvara.console.write(lerp8(192, 64, 5, 10));
+    varvara.console.write(lerp8(0, 255, 1, 2));
+    varvara.console.write(lerp8(10, 20, 3, 4));
+}

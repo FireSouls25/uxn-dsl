@@ -98,18 +98,21 @@ device Mouse 144 {
     x: 2
     y: 2
     state: 1
-    chord: 1
-    pad: 4
-    scrolly: 1
-    scrolly_hb: 1
-    scrolly_lb: 1
+    pad: 3
+    scrollx: 2
+    scrolly: 2
 }
 ```
 
-Declared (and vectored to a `brk`-only `on_mouse`) in both games;
-neither game reads it yet. `test_device.ux` shows the smaller shape
-(`x`, `y`, `state`) with a `handler :: fn()` that copies
-`Mouse.x` → `Screen.x`.
+Motion/button/scroll vectors (`mouse_pos/down/up/scroll` in the
+emulator source): `x`/`y` track always, `state` is the button
+bitmask, scroll ports are one-shot deltas with inverted Y (zeroed
+after the vector fires). Older game blocks name these ports
+differently (`chord`, `scrolly_hb/lb`) — untouched and unread, so
+harmless, but new code takes the block above. `lib/mouse.ux` adds
+edge polls (`mouse_poll(Mouse.state)`, `MOUSE_*` masks) over it;
+`test_device.ux` shows the smaller shape (`x`, `y`, `state`) with
+a `handler :: fn()` that copies `Mouse.x` → `Screen.x`.
 
 ## `device DateTime 192`
 
@@ -131,3 +134,30 @@ Wall clock. Both games seed RNG from it (`seed = DateTime.second +
 DateTime.minute * 256` in snake; `DateTime.second =
 DateTime.second` in the worm stub). Test harnesses pin `seed`
 afterwards for determinism.
+
+## `device FileA 160`
+
+```ux
+device FileA 160 {
+    vector: 2
+    success: 2
+    stat: 2
+    delete: 1
+    append: 1
+    name: 2
+    length: 2
+    read: 2
+    write: 2
+}
+```
+
+Host files, relative to the emulator's working directory (paths are
+NUL-terminated bytes in RAM). Protocol, per the emulator source:
+`name` selects (and resets), `length` sizes, then writing `read` /
+`write` / `stat` fires with the RAM address — the result count lands
+in `success`. `append` (`1`) switches writes from truncate to
+append; any write to `delete` unlinks. Native operations complete
+inline; the web emulator reports through `vector` instead — see
+`lib/file.ux`, whose split-phase macros (`file_read_req` …,
+`file_poll`, `file_on_event`) cover both. `lib/test_file.ux` rounds
+a file through write/stat/read/poll/delete headlessly.

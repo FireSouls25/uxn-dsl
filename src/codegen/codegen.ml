@@ -12,12 +12,19 @@ type var_info = {
 }
 
 type zero_item =
-  | ZVar of string * int
+  (* name, size, owning function ("" = global); the func tag feeds
+     --zp-report (and later, spillover priority). *)
+  | ZVar of string * int * string
   | ZGroup of string * int * (string * int) list
+
+(* Set by --zp-report: print total plus per-function bytes. *)
+let zp_report = ref false
 
 let rec typ_size = function
   | Ast.TypU8 -> 1
   | Ast.TypU16 -> 2
+  | Ast.TypI8 -> 1
+  | Ast.TypI16 -> 2
   | Ast.TypBool -> 1
   | Ast.TypVoid -> 0
   | Ast.TypArray (t, n) -> n * (typ_size t)
@@ -41,27 +48,48 @@ type codegen_env = {
   mutable devices: (string * (string * int) list) list;
   mutable groups: (string * (string * int) list) list;
   (* Structs: name -> [(field, offset, size)]. Offsets derive from
-     field sizes at declaration; v1 fields are scalar. *)
+     field sizes at declaration; v2 fields nest structs and arrays,
+     so sizes resolve through the table below. *)
   mutable structs: (string * (string * (int * int)) list) list;
+  (* Struct field types: name -> [(field, type)], for resolving
+     nested/array paths (offsets alone can't name the next step). *)
+  mutable struct_types: (string * (string * Ast.typ) list) list;
   mutable constants: string list;
   mutable zero_order: zero_item list;
   mutable func_sigs: (string * int list) list;
   (* Declared return widths for call-result sizing (proposal 9
-     pre-pass fills both tables). *)
+     pre-pass fills both tables), plus return signedness for
+     sign-aware extension (i8 callees sign-extend, u8 zero-extend). *)
   mutable func_rets: (string * int) list;
+  mutable func_ret_sign: (string * bool) list;
   mutable func_ret: int option;
-  (* Main-RAM buffer region for `buffer` decls: base address plus
-     next free address; (name, addr, size) in allocation order. *)
+  (* Short function labels (`fn0`, `fn1`, ... in program order): the
+     emitted `@fnN` keeps drifblim's per-name symbol dictionary small
+     (it stores every `scope/sub` name; long function names repeat on
+     every branch label and overflow `$4800` on large programs). The
+     `fn` prefix (not `f`: single-hex-letter-plus-digits reads as a
+     hex literal, which drifblim rejects) keeps names valid. The real
+     name rides in the header comment (`@fn3 ( draw_pos -- )`), so the
+     .tal stays navigable. Assigned in the pre-pass below. *)
+  mutable func_alias: (string * string) list;
+  (* Buffer payload accounting: offsets are bookkeeping only, not
+     runtime addresses. The assembler places reservations after ROM
+     contents; (name, payload offset, size) in allocation order. *)
   mutable next_buffer_addr: int;
   mutable buffer_order: (string * int * int) list;
+  (* Data/asset blob names: registered in global_vars for address
+     math (proposal 10), but they live in the data section — never
+     zero-page reservations (see the |00 emission below). *)
+  mutable data_order: string list;
   (* ROM metadata from `meta {}` (title, author), wired at boot. *)
   mutable meta: (string * string) option;
   (* Zero-page bytes reserved so far (globals + spilled locals). *)
   mutable zp_used: int;
 }
 
-(* Buffers live in main RAM, clear of code/data (loaded at 0x100). *)
-let buffer_region_base = 0x2000
+(* Actual addresses are assigned by the assembler after code/data.
+   This counter measures buffer payload only. *)
+let buffer_region_base = 0
 
 let create_env () = {
   global_vars = [];
@@ -78,13 +106,17 @@ let create_env () = {
   devices = [];
   groups = [];
   structs = [];
+  struct_types = [];
   constants = [];
   zero_order = [];
   func_sigs = [];
   func_rets = [];
+  func_ret_sign = [];
   func_ret = None;
+  func_alias = [];
   next_buffer_addr = buffer_region_base;
   buffer_order = [];
+  data_order = [];
   meta = None;
   zp_used = 0;
 }
@@ -130,6 +162,64 @@ let is_struct_var env name =
     | _ -> None)
   with Not_found -> None
 
+(* v2: does a type contain a struct node (directly or through an
+   array/pointer/mod wrapper)? *)
+let rec typ_involves_struct = function
+  | Ast.TypStruct _ -> true
+  | Ast.TypArray (e, _) | Ast.TypPointer e | Ast.TypMod (e, _) ->
+    typ_involves_struct e
+  | _ -> false
+
+(* v2: does an Ident/Index/Field chain touch a struct node? Anything
+   else (devices, groups, scalars) is false, so legacy emitters stay
+   untouched wherever this is false. *)
+let rec composite_involves_struct env = function
+  | Ast.Ident (n, _) ->
+    (try
+       let info =
+         try List.assoc n env.local_vars
+         with Not_found -> List.assoc n env.global_vars
+       in
+       typ_involves_struct info.typ
+     with Not_found -> false)
+  | Ast.Index (a, i) ->
+    composite_involves_struct env a || composite_involves_struct env i
+  | Ast.Field (e, _) -> composite_involves_struct env e
+  | _ -> false
+
+(* v2: resolve an Ident/Index/Field chain over struct vars, struct
+   arrays and their nested/array fields to its type. Anything else
+   fails — callers only route struct-involved shapes here. *)
+let rec composite_node_typ env = function
+  | Ast.Ident (n, _) ->
+    (try
+       (try List.assoc n env.local_vars
+        with Not_found -> List.assoc n env.global_vars).typ
+     with Not_found -> failwith (Printf.sprintf "undefined variable `%s`" n))
+  | Ast.StringLit _ -> Ast.TypPointer Ast.TypU8
+  | Ast.Index (a, _) ->
+    (match composite_node_typ env a with
+     | Ast.TypArray (e, _) | Ast.TypPointer e -> e
+     | _ -> failwith "cannot index non-array path")
+  | Ast.Field (e, f) ->
+    (match composite_node_typ env e with
+     | Ast.TypStruct s ->
+       (try List.assoc f (List.assoc s env.struct_types)
+        with Not_found -> failwith (Printf.sprintf "`%s` has no field `%s`" s f))
+     | _ -> failwith (Printf.sprintf "cannot access field `%s` of non-struct value" f))
+  | _ -> failwith "not a struct/array path"
+
+(* v2: `dst = src` is a whole-value copy iff both sides are the
+   same named struct or the same array type/length. Never raises
+   (boolean probe for a guard); the checked program decides —
+   legacy arms keep their errors. *)
+let is_whole_copy env l r =
+  match (try Some (composite_node_typ env l, composite_node_typ env r)
+         with _ -> None) with
+  | Some (Ast.TypStruct s1, Ast.TypStruct s2) -> s1 = s2
+  | Some (Ast.TypArray (e1, n1), Ast.TypArray (e2, n2)) -> e1 = e2 && n1 = n2
+  | _ -> false
+
 (* Size of a type that may name a struct (buffers of structs, struct
    variables). Non-struct types use typ_size as before. *)
 let rec resolve_size env = function
@@ -152,6 +242,14 @@ let get_var_info env name =
   with Not_found ->
     try List.assoc name env.global_vars
     with Not_found -> raise Not_found
+
+(* Emitted label of a function: its short alias when assigned, else
+   the name itself (unknown callees keep the legacy `;name`, which
+   fails loudly at assembly as before). Data/buffer/blob names are
+   never aliased — only FuncDecl names enter the table. *)
+let fal env name =
+  try List.assoc name env.func_alias
+  with Not_found -> name
 
 let get_var_addr env name =
   try
@@ -177,6 +275,13 @@ let make_string_label env s =
 
 let local_counter = ref 0
 
+(* Branch scaffolding labels use two-letter stems (it/ie/ix/et/ee/
+   wl/wc/wx/fr/fc/fx/fv/ak/al/pt, always with the per-function
+   counter suffix). Drifblim keeps every scoped label name in a
+   ~15KB dictionary, so descriptive stems overflow it on large
+   programs (chess hit "Symbols exceeded" at ~16KB). The stems are
+   reserved: user `label` names colliding with them in the same
+   function fail assembly — pick anything else. *)
 let new_local_label env prefix =
   incr local_counter;
   sprintf "%s_%d" prefix !local_counter
@@ -206,10 +311,10 @@ let add_local_var env name typ =
   (* Reserve once per (function, name): repeated declarations share
      the slot, as before. *)
   let already =
-    List.exists (function ZVar (n, _) -> n = mangled | _ -> false) env.zero_order
+    List.exists (function ZVar (n, _, _) -> n = mangled | _ -> false) env.zero_order
   in
   if not already then begin
-    env.zero_order <- ZVar (mangled, size) :: env.zero_order;
+    env.zero_order <- ZVar (mangled, size, env.func_name) :: env.zero_order;
     env.zp_used <- env.zp_used + size;
     if env.zp_used > 0x100 then
       failwith (Printf.sprintf "out of zero-page memory (%d bytes used)" env.zp_used);
@@ -218,7 +323,7 @@ let add_local_var env name typ =
 
 let rec field_path expr =
   match expr with
-  | Ident name -> name
+  | Ident (name, _) -> name
   | Field (outer, field) -> (field_path outer) ^ "." ^ field
   | _ -> "unknown"
 
@@ -228,13 +333,13 @@ let rec field_path expr =
 let rec expr_is_u8 env expr =
   (* True iff codegen_expr leaves exactly 1 byte on the stack. *)
   match expr with
-  | IntLit n when n >= 0 && n <= 255 -> true
-  | Ident n ->
+  | IntLit (n, _) when n >= 0 && n <= 255 -> true
+  | Ident (n, _) ->
     (try (try List.assoc n env.local_vars with Not_found -> List.assoc n env.global_vars).size = 1
      with Not_found -> false)
-  | Field (Ident b, f) when is_device env b ->
+  | Field (Ident (b, _), f) when is_device env b ->
     (match lookup_device_port env b f with Some 1 -> true | _ -> false)
-  | Field (Ident b, f) when is_group env b ->
+  | Field (Ident (b, _), f) when is_group env b ->
     (match lookup_group_field env b f with Some 1 -> true | _ -> false)
   | BinOp (Eq, _, _) | BinOp (Neq, _, _) | BinOp (Lt, _, _)
   | BinOp (Gt, _, _) | BinOp (Le, _, _) | BinOp (Ge, _, _)
@@ -245,9 +350,9 @@ let rec expr_is_u8 env expr =
   (* A call leaves exactly what the callee declares: byte for `-> u8`
      (or bool), short otherwise. Unknown callees keep the legacy
      short assumption. *)
-  | Call (Ident n, _) ->
+  | Call (Ident (n, _), _) ->
     (try List.assoc n env.func_rets = 1 with Not_found -> false)
-  | Index (Ident n, _) ->
+  | Index (Ident (n, _), _) ->
     (try
        let info =
          try List.assoc n env.local_vars
@@ -259,20 +364,155 @@ let rec expr_is_u8 env expr =
        | _ -> false)
      with Not_found -> false)
   (* A byte struct field leaves exactly one byte (LDA/LDZ). *)
-  | Field (Index (Ident arr, _), fname) ->
+  | Field (Index (Ident (arr, _), _), fname) ->
     (match is_struct_array env arr with
     | Some sname ->
       (match try Some (struct_field env sname fname) with Not_found -> None with
       | Some (_, 1) -> true
       | _ -> false)
     | None -> false)
-  | Field (Ident v, fname) ->
+  | Field (Ident (v, _), fname) ->
     (match is_struct_var env v with
     | Some (sname, _) ->
       (match try Some (struct_field env sname fname) with Not_found -> None with
       | Some (_, 1) -> true
       | _ -> false)
     | None -> false)
+  | Field (e, fname) ->
+    (* v2: scalar leaf of a chained path leaves one byte. v1 shapes
+       matched above; anything unresolvable keeps the legacy false. *)
+    (match e with
+     | Ident _ | Index (Ident _, _) -> false
+     | _ ->
+       (match try Some (composite_node_typ env (Field (e, fname))) with _ -> None with
+        | Some (Ast.TypU8 | Ast.TypBool) -> true
+        | _ -> false))
+  | Index (arr, _) ->
+    (* v2: byte element of an array-typed path (arrays and string
+       pointers alike). *)
+    (match arr with
+     | Ident _ -> false
+     | _ ->
+       (match try Some (composite_node_typ env arr) with _ -> None with
+        | Some (Ast.TypArray (Ast.TypU8, _)) | Some (Ast.TypArray (Ast.TypBool, _)) -> true
+        | Some (Ast.TypPointer Ast.TypU8) | Some (Ast.TypPointer Ast.TypBool) -> true
+        | _ -> false))
+  | _ -> false
+
+(* Signedness mirrors for i8/i16: expr_is_s8 is true iff the expr
+   leaves exactly 1 SIGNED byte (needs sign-extension, not
+   zero-extension); expr_is_s16 iff it leaves a signed short.
+   Literals, ports and bools are never signed; bitwise ops follow the
+   lattice (same-sign keeps it, mixed goes unsigned). *)
+and field_typ env sname fname =
+  try Some (List.assoc fname (List.assoc sname env.struct_types))
+  with Not_found -> None
+
+and expr_is_s8 env expr =
+  match expr with
+  | Ident (n, _) ->
+    (try (match try List.assoc n env.local_vars with Not_found -> List.assoc n env.global_vars with
+          | { typ = Ast.TypI8; _ } -> true | _ -> false)
+     with Not_found -> false)
+  | UnOp ((Neg | NotBit), e) ->
+    expr_is_s8 env e
+    || (match e with IntLit (n, _) -> n >= 1 && n <= 128 | _ -> false)
+  | Call (Ident (n, _), _) ->
+    (try List.assoc n env.func_rets = 1 && List.assoc n env.func_ret_sign
+     with Not_found -> false)
+  | Index (Ident (n, _), _) ->
+    (try
+       let info =
+         try List.assoc n env.local_vars
+         with Not_found -> List.assoc n env.global_vars
+       in
+       (match info.typ with
+        | Ast.TypArray (Ast.TypI8, _) | Ast.TypPointer Ast.TypI8 -> true
+        | _ -> false)
+     with Not_found -> false)
+  | Field (Index (Ident (arr, _), _), fname) ->
+    (match is_struct_array env arr with
+     | Some sname ->
+       (match field_typ env sname fname with Some Ast.TypI8 -> true | _ -> false)
+     | None -> false)
+  | Field (Ident (v, _), fname) ->
+    (match is_struct_var env v with
+     | Some (sname, _) ->
+       (match field_typ env sname fname with Some Ast.TypI8 -> true | _ -> false)
+     | None -> false)
+  | Field (e, fname) ->
+    (match e with
+     | Ident _ | Index (Ident _, _) -> false
+     | _ ->
+       (match try Some (composite_node_typ env (Field (e, fname))) with _ -> None with
+        | Some Ast.TypI8 -> true
+        | _ -> false))
+  | Index (arr, _) ->
+    (match arr with
+     | Ident _ -> false
+     | _ ->
+       (match try Some (composite_node_typ env arr) with _ -> None with
+        | Some (Ast.TypArray (Ast.TypI8, _)) -> true
+        | Some (Ast.TypPointer Ast.TypI8) -> true
+        | _ -> false))
+  | BinOp ((Add | Sub | Mul), l, r) ->
+    expr_is_s8 env l && expr_is_s8 env r
+  | BinOp ((And | Or | Xor | Lshift | Rshift), l, r) ->
+    expr_is_s8 env l && expr_is_s8 env r
+  | _ -> false
+
+and expr_is_s16 env expr =
+  match expr with
+  | Ident (n, _) ->
+    (try (match try List.assoc n env.local_vars with Not_found -> List.assoc n env.global_vars with
+          | { typ = Ast.TypI16; _ } -> true | _ -> false)
+     with Not_found -> false)
+  | UnOp ((Neg | NotBit), e) ->
+    expr_is_s16 env e
+    || (match e with IntLit (n, _) -> n >= 129 && n <= 32768 | _ -> false)
+  | Call (Ident (n, _), _) ->
+    (try List.assoc n env.func_rets = 2 && List.assoc n env.func_ret_sign
+     with Not_found -> false)
+  | Index (Ident (n, _), _) ->
+    (try
+       let info =
+         try List.assoc n env.local_vars
+         with Not_found -> List.assoc n env.global_vars
+       in
+       (match info.typ with
+        | Ast.TypArray (Ast.TypI16, _) | Ast.TypPointer Ast.TypI16 -> true
+        | _ -> false)
+     with Not_found -> false)
+  | Field (Index (Ident (arr, _), _), fname) ->
+    (match is_struct_array env arr with
+     | Some sname ->
+       (match field_typ env sname fname with Some Ast.TypI16 -> true | _ -> false)
+     | None -> false)
+  | Field (Ident (v, _), fname) ->
+    (match is_struct_var env v with
+     | Some (sname, _) ->
+       (match field_typ env sname fname with Some Ast.TypI16 -> true | _ -> false)
+     | None -> false)
+  | Field (e, fname) ->
+    (match e with
+     | Ident _ | Index (Ident _, _) -> false
+     | _ ->
+       (match try Some (composite_node_typ env (Field (e, fname))) with _ -> None with
+        | Some Ast.TypI16 -> true
+        | _ -> false))
+  | Index (arr, _) ->
+    (match arr with
+     | Ident _ -> false
+     | _ ->
+       (match try Some (composite_node_typ env arr) with _ -> None with
+        | Some (Ast.TypArray (Ast.TypI16, _)) -> true
+        | Some (Ast.TypPointer Ast.TypI16) -> true
+        | _ -> false))
+  | BinOp ((Add | Sub | Mul), l, r) ->
+    let s e = expr_is_s8 env e || expr_is_s16 env e in
+    s l && s r && not (expr_is_s8 env l && expr_is_s8 env r)
+  | BinOp ((And | Or | Xor | Lshift | Rshift), l, r) ->
+    expr_is_s16 env l && expr_is_s16 env r
   | _ -> false
 
 (* Reduce the on-stack value into [0, m): the existing `%` lowering
@@ -288,67 +528,102 @@ let emit_mod_reduce env = function
 
 let rec codegen_expr env expr =
   match expr with
-  | IntLit n ->
+  | IntLit (n, _) ->
     if n >= 0 && n <= 255 then
       emit env "#%02x" n
     else if n >= 0 && n <= 65535 then
       emit env "#%04x" n
     else
       failwith (sprintf "Integer %d out of range" n)
-  | StringLit s ->
+  | StringLit (s, _) ->
     let label = make_string_label env s in
     emit env ";%s" label
-  | Ident name ->
+  | Ident (name, _) ->
     if List.mem name env.constants then
       emit env ";%s" name
     else
+      (* Address decay (proposal 10): a bare array ident is its
+         address (`;name`) — every value use is rejected upstream,
+         so only decay positions (pointer args/inits) reach here.
+         Every array (zp, buffer, blob) owns an absolute label. *)
       (try
         let info = List.assoc name env.local_vars in
-        (* Locals are zero-page residents under mangled names. *)
-        if info.size = 1 then emit env ".%s LDZ" info.addr else emit env ".%s LDZ2" info.addr
+        (match info.typ with
+         | Ast.TypArray _ -> emit env ";%s" info.addr
+         | _ ->
+           (* Locals are zero-page residents under mangled names. *)
+           if info.size = 1 then emit env ".%s LDZ" info.addr else emit env ".%s LDZ2" info.addr)
       with Not_found ->
         try
           let info = List.assoc name env.global_vars in
-          if info.size = 1 then emit env ".%s LDZ" info.name else emit env ".%s LDZ2" info.name
+          (match info.typ with
+           | Ast.TypArray _ -> emit env ";%s" info.name
+           | _ ->
+             if info.size = 1 then emit env ".%s LDZ" info.name else emit env ".%s LDZ2" info.name)
         with Not_found ->
           emit env ".%s LDZ2" name)
   | BinOp (op, left, right) ->
     let is_eq = match op with Eq | Neq | Lt | Gt | Le | Ge -> true | _ -> false in
     let left_is_u8 =
       match left with
-      | Ident n -> (try (try List.assoc n env.local_vars with Not_found -> List.assoc n env.global_vars).size = 1 with Not_found -> false)
-      | Field (Ident b, f) when is_device env b -> (match lookup_device_port env b f with Some 1 -> true | _ -> false)
-      | Field (Ident b, f) when is_group env b -> (match lookup_group_field env b f with Some 1 -> true | _ -> false)
-      | IntLit n when n <= 255 -> true
+      | Ident (n, _) -> (try (try List.assoc n env.local_vars with Not_found -> List.assoc n env.global_vars).size = 1 with Not_found -> false)
+      | Field (Ident (b, _), f) when is_device env b -> (match lookup_device_port env b f with Some 1 -> true | _ -> false)
+      | Field (Ident (b, _), f) when is_group env b -> (match lookup_group_field env b f with Some 1 -> true | _ -> false)
+      | IntLit (n, _) when n <= 255 -> true
       | _ -> false
     in
     let right_is_u8 =
       match right with
-      | IntLit n when n <= 255 -> true
-      | Ident n -> (try (try List.assoc n env.local_vars with Not_found -> List.assoc n env.global_vars).size = 1 with Not_found -> false)
-      | Field (Ident b, f) when is_device env b -> (match lookup_device_port env b f with Some 1 -> true | _ -> false)
+      | IntLit (n, _) when n <= 255 -> true
+      | Ident (n, _) -> (try (try List.assoc n env.local_vars with Not_found -> List.assoc n env.global_vars).size = 1 with Not_found -> false)
+      | Field (Ident (b, _), f) when is_device env b -> (match lookup_device_port env b f with Some 1 -> true | _ -> false)
       | _ -> false
     in
-    let use8 = is_eq && left_is_u8 && right_is_u8 in
-    let emit_operand e =
+    (* Ordered comparison over signed values flips the sign bit of
+       each signed side (literals fold the flip in) and compares
+       unsigned: `(a^0x8000) < (b^0x8000)` iff `a < b` signed. The
+       checker only lets same-sign pairs and literals through, so an
+       unsigned side here means a literal. *)
+    let is_ord = match op with Lt | Gt | Le | Ge -> true | _ -> false in
+    let flavored =
+      is_ord &&
+      (expr_is_s8 env left || expr_is_s16 env left ||
+       expr_is_s8 env right || expr_is_s16 env right) in
+    let use8 = is_eq && left_is_u8 && right_is_u8 && not (is_ord && flavored) in
+    let emit_operand flip e =
       if use8 then codegen_expr env e
       else
         (* 16-bit op: both operands must be shorts *)
         match e with
-        | IntLit n when n >= 0 && n <= 255 -> emit env "#%04x" n
+        | IntLit (n, _) when n >= 0 && n <= 255 ->
+          emit env "#%04x" (if flip then n lxor 0x8000 else n)
+        | _ when expr_is_s8 env e ->
+          codegen_expr env e; emit env " DUP #07 SFT #00 SWP SUB SWP";
+          if flip then emit env " #8000 EOR2"
         | _ when expr_is_u8 env e -> codegen_expr env e; emit env " #00 SWP"
-        | _ -> codegen_expr env e
+        | _ ->
+          codegen_expr env e;
+          if flip then emit env " #8000 EOR2"
     in
+    let flip_side e =
+      flavored &&
+      (match e with IntLit _ -> true | _ -> expr_is_s8 env e || expr_is_s16 env e) in
     (match op with
      | Lshift | Rshift ->
         (* Real SFT2. Control byte: high nibble = left distance,
            low nibble = right distance (rightward first). Constant
            amounts fold to one literal (masked mod 16); dynamic
-           amounts go through the high nibble via #40 SFT. *)
-        codegen_rhs env left 2;
+           amounts go through the high nibble via #40 SFT.
+           Shifts are logical on the low byte: always zero-extend
+           (a sign-extended negative would shift garbage into it). *)
+        (match left with
+         | IntLit (n, _) when n >= 0 && n <= 255 -> emit env "#%04x" n
+         | _ when expr_is_u8 env left || expr_is_s8 env left ->
+           codegen_expr env left; emit env " #00 SWP"
+         | _ -> codegen_expr env left);
         emit env " ";
         (match right with
-        | IntLit n ->
+        | IntLit (n, _) ->
           let c = (match op with
             | Lshift -> ((n land 0x0f) lsl 4)
             | _ -> (n land 0x0f)) in
@@ -373,9 +648,9 @@ let rec codegen_expr env expr =
         codegen_cond env right;
         emit env " ORA"
       | _ ->
-        emit_operand left;
+        emit_operand (flip_side left) left;
         emit env " ";
-        emit_operand right;
+        emit_operand (flip_side right) right;
         emit env " ";
         (match op with
        | Add -> if use8 then emit env "ADD" else emit env "ADD2"
@@ -422,7 +697,7 @@ let rec codegen_expr env expr =
              Truncate u16 arg to low byte via NIP. *)
           List.iter (fun arg ->
             codegen_expr env arg;
-            if not (expr_is_u8 env arg) then emit env " NIP";
+            if not (expr_is_u8 env arg || expr_is_s8 env arg) then emit env " NIP";
             emit env " "
           ) args;
           emit env ".Console/write DEO"
@@ -433,7 +708,7 @@ let rec codegen_expr env expr =
           (* Write to error: value Console/error DEO *)
           List.iter (fun arg ->
             codegen_expr env arg;
-            if not (expr_is_u8 env arg) then emit env " NIP";
+            if not (expr_is_u8 env arg || expr_is_s8 env arg) then emit env " NIP";
             emit env " "
           ) args;
           emit env ".Console/error DEO"
@@ -448,14 +723,14 @@ let rec codegen_expr env expr =
       (* Regular function call: promote args to param sizes when known. *)
       let param_sizes =
         match func_expr with
-        | Ident name -> (try Some (List.assoc name env.func_sigs) with Not_found -> None)
+        | Ident (name, _) -> (try Some (List.assoc name env.func_sigs) with Not_found -> None)
         | _ -> None
       in
       (* Builtin print("...") inlines a string printer and takes over
          arg emission (the literal must not be pushed as a value). *)
       let is_print_lit =
         match func_expr, args with
-        | Ident "print", [StringLit _] -> true
+        | Ident ("print", _), [StringLit _] -> true
         | _ -> false
       in
       if not is_print_lit then
@@ -471,30 +746,35 @@ let rec codegen_expr env expr =
             emit env " "
           ) args);
       (match func_expr with
-      | Ident "print" ->
+      | Ident ("print", _) ->
         (match args with
-        | [StringLit s] ->
+        | [StringLit (s, _)] ->
           (* Inline NUL-terminated string printer:
              ;str &loop LDAk .Console/write DEO INC2 LDAk ?&loop POP2 *)
           let label = make_string_label env s in
-          let loop = new_local_label env "print" in
+          let loop = new_local_label env "pt" in
           emit env ";%s &%s LDAk .Console/write DEO INC2 LDAk ?&%s POP2"
             label loop loop
         | _ ->
           (* Args already emitted above; a non-literal print call
              falls through to a (likely undefined) JSR. *)
           emit env ";print JSR2")
-      | Ident name ->
-        emit env ";%s JSR2" name
+      | Ident (name, _) ->
+        emit env ";%s JSR2" (fal env name)
       | _ -> failwith "Invalid function expression")
     end
+  | Index (arr, index) when (match arr with Ast.Ident _ -> false | _ -> composite_involves_struct env arr) ->
+    (* v2: element of an array-typed path (a struct's array field). *)
+    let esz = codegen_arrayfield_addr env arr index in
+    emit env " ";
+    if esz = 1 then emit env "LDA" else emit env "LDA2"
   | Index (arr, index) ->
     let esz = codegen_index_addr env arr index in
     emit env " ";
     if esz = 1 then emit env "LDA" else emit env "LDA2"
   | Field (expr, field) ->
     (match expr with
-    | Index (Ident arr, index) ->
+    | Index (Ident (arr, _), index) ->
       (match is_struct_array env arr with
       | Some sname ->
         (* Buffer/zp row field: absolute base + scaled index + field
@@ -516,7 +796,7 @@ let rec codegen_expr env expr =
       | None ->
         (* Legacy fallthrough below handles devices/groups/plain. *)
         codegen_expr env expr)
-    | Ident v ->
+    | Ident (v, _) ->
       (match is_struct_var env v with
       | Some (sname, info) ->
         (* Zero-page row field: slot address + field offset. *)
@@ -542,15 +822,30 @@ let rec codegen_expr env expr =
         | _ -> emit env ".%s/%s LDZ2" v field)
       | None ->
         codegen_expr env expr)
+    | _ when composite_involves_struct env expr ->
+      (* v2: chained access over nested structs — absolute addressing,
+         sized by the leaf type (checked scalar). *)
+      codegen_path_load env (Field (expr, field))
     | _ ->
       codegen_expr env expr)
-  | AddrOf name ->
-    emit env ";%s" name
+  | AddrOf (name, _) ->
+    (* Function vectors alias; data/blob addresses keep their names
+       (only FuncDecl names enter the alias table). *)
+    emit env ";%s" (fal env name)
   | RawLit s ->
     emit env "%s" s
+  | Assign (left, right) when is_whole_copy env left right ->
+    (* v2: same-type struct/array values copy whole (checked). Size
+       is shared, so either side sizes it. *)
+    (match composite_node_typ env left with
+     | Ast.TypStruct s ->
+       codegen_whole_copy env left right (resolve_size env (Ast.TypStruct s))
+     | Ast.TypArray (e, n) ->
+       codegen_whole_copy env left right (n * resolve_size env e)
+     | _ -> failwith "internal error: whole copy of non-copyable")
   | Assign (left, right) ->
     (match left with
-    | Ident name ->
+    | Ident (name, _) ->
       (try
         let info = List.assoc name env.local_vars in
         codegen_rhs env right info.size;
@@ -567,7 +862,7 @@ let rec codegen_expr env expr =
           emit env " .%s STZ2" name)
     | Field (field_expr, field_name) ->
       (match field_expr with
-      | Index (Ident arr, index) ->
+      | Index (Ident (arr, _), index) ->
         (match is_struct_array env arr with
         | Some sname ->
           let elemsize = resolve_size env (Ast.TypStruct sname) in
@@ -590,7 +885,7 @@ let rec codegen_expr env expr =
         | None ->
           codegen_expr env right;
           emit env " #0000")
-      | Ident v ->
+      | Ident (v, _) ->
         (match is_struct_var env v with
         | Some (sname, info) ->
           let off, fsize =
@@ -621,9 +916,30 @@ let rec codegen_expr env expr =
         | None ->
           codegen_expr env right;
           emit env " #0000")
+      | _ when composite_involves_struct env field_expr ->
+        (* v2: store a scalar leaf of a chained path (checked scalar;
+           struct leaves copy via the Assign guard above). *)
+        let sz =
+          (match composite_node_typ env (Field (field_expr, field_name)) with
+           | Ast.TypU8 | Ast.TypBool -> 1
+           | Ast.TypU16 -> 2
+           | _ -> failwith "cannot store a whole array or struct here (assign fields)") in
+        codegen_path_store env (Field (field_expr, field_name)) right sz
       | _ ->
         codegen_expr env right;
         emit env " #0000")
+    | Index (arr, index) when (match arr with Ast.Ident _ -> false | _ -> composite_involves_struct env arr) ->
+      (* v2: store an element of an array-typed path. STA wants
+         ( value addr* -- ): value first, address on top. *)
+      let esz =
+        (match composite_node_typ env arr with
+         | Ast.TypArray (e, _) -> resolve_size env e
+         | _ -> failwith "cannot index non-array path") in
+      codegen_rhs env right esz;
+      emit env " ";
+      ignore (codegen_arrayfield_addr env arr index);
+      emit env " ";
+      if esz = 1 then emit env "STA" else emit env "STA2"
     | Index (arr, index) ->
       (* STA expects ( value addr* -- ): value first, address on top. *)
       let esz, _ = index_array_info env arr in
@@ -637,18 +953,22 @@ let rec codegen_expr env expr =
     emit env ";%s" name
 
 (* Emit RHS sized to dest_size bytes:
-   - dest 2, expr 1 byte -> zero-extend (#00 SWP) or short literal
+   - dest 2, expr 1 byte -> zero-extend (#00 SWP), sign-extend an i8
+     (DUP #07 SFT keeps the sign bit, 0 minus it is the high byte), or
+     short literal
    - dest 1, expr 2 bytes -> truncate low byte (NIP)
    - else direct. *)
 and codegen_rhs env expr dest_size =
   if dest_size = 2 then
     match expr with
-    | IntLit n when n >= 0 && n <= 255 -> emit env "#%04x" n
+    | IntLit (n, _) when n >= 0 && n <= 255 -> emit env "#%04x" n
+    | _ when expr_is_s8 env expr ->
+      codegen_expr env expr; emit env " DUP #07 SFT #00 SWP SUB SWP"
     | _ when expr_is_u8 env expr -> codegen_expr env expr; emit env " #00 SWP"
     | _ -> codegen_expr env expr
   else if dest_size = 1 then
     match expr with
-    | IntLit n when n >= 0 && n <= 255 -> emit env "#%02x" n
+    | IntLit (n, _) when n >= 0 && n <= 255 -> emit env "#%02x" n
     | _ when expr_is_u8 env expr -> codegen_expr env expr
     | _ -> codegen_expr env expr; emit env " NIP"
   else
@@ -659,7 +979,7 @@ and codegen_rhs env expr dest_size =
    pointers evaluate to an address. Pure: emits nothing. *)
 and index_array_info env arr =
   match arr with
-  | Ident n ->
+  | Ident (n, _) ->
     (try
        let info =
          try List.assoc n env.local_vars
@@ -673,16 +993,23 @@ and index_array_info env arr =
           (resolve_size env elem, true)
         | Ast.TypPointer elem -> (typ_size elem, false)
         | _ -> failwith (Printf.sprintf "`%s` is not an array" n))
-     with Not_found ->
-       failwith (Printf.sprintf "undefined array `%s`" n))
-  | _ -> (2, false)
+      with Not_found ->
+        failwith (Printf.sprintf "undefined array `%s`" n))
+  | _ ->
+    (* Literals and substituted paths (e.g. a macro `&u8` param fed a
+       string literal) carry a known element type — size from it
+       instead of assuming short. Anything opaque keeps the legacy 2. *)
+    (match try Some (composite_node_typ env arr) with _ -> None with
+     | Some (Ast.TypArray (e, _)) | Some (Ast.TypPointer e) ->
+       (resolve_size env e, false)
+     | _ -> (2, false))
 
 (* Emit base-address + scaled index for arr[index], leaving the absolute
    address (short) on the stack. Returns the element size in bytes. *)
 and codegen_index_addr env arr index =
   let elem_size, use_addr_base = index_array_info env arr in
   (match arr with
-   | Ident n when use_addr_base -> emit env ";%s" n
+   | Ident (n, _) when use_addr_base -> emit env ";%s" n
    | _ -> codegen_expr env arr);
   emit env " ";
   codegen_rhs env index 2;
@@ -691,6 +1018,92 @@ and codegen_index_addr env arr index =
   if elem_size <> 1 then emit env " #%04x MUL2" elem_size;
   emit env " ADD2";
   elem_size
+
+(* v2: emit code leaving the absolute (short) address of a composite
+   node — struct var, struct-array row, nested field, or array
+   element. Absolute everywhere, never LDZ: only new (deep) shapes
+   route here, so v1 output is untouched and structs crossing the
+   zero-page boundary stay correct. Every `@name` reservation (zero
+   page, buffers) is an absolute label, so `;name` works for all. *)
+and codegen_composite_addr env expr =
+  match expr with
+  | Ast.Ident (n, _) ->
+    let info = get_var_info env n in
+    emit env ";%s" (if info.is_local then info.addr else info.name)
+  | Ast.Index (arr, idx) ->
+    codegen_composite_addr env arr;
+    emit env " ";
+    codegen_rhs env idx 2;
+    let stride =
+      (match composite_node_typ env arr with
+       | Ast.TypArray (e, _) | Ast.TypPointer e -> resolve_size env e
+       | _ -> failwith "cannot index non-array path") in
+    if stride <> 1 then emit env " #%04x MUL2" stride;
+    emit env " ADD2"
+  | Ast.Field (e, f) ->
+    codegen_composite_addr env e;
+    let off =
+      (match composite_node_typ env e with
+       | Ast.TypStruct s ->
+         (try fst (List.assoc f (List.assoc s env.structs))
+          with Not_found -> failwith (Printf.sprintf "`%s` has no field `%s`" s f))
+       | _ -> failwith (Printf.sprintf "cannot access field `%s` of non-struct value" f)) in
+    if off <> 0 then emit env " #%04x ADD2" off
+  | _ -> failwith "not a struct/array path"
+
+(* v2: load a scalar leaf of a deep path (checked scalar). *)
+and codegen_path_load env expr =
+  let sz =
+    (match composite_node_typ env expr with
+     | Ast.TypU8 | Ast.TypBool -> 1
+     | Ast.TypU16 -> 2
+     | _ -> failwith "cannot load a whole array or struct value (index an element or access `.field`)") in
+  codegen_composite_addr env expr;
+  emit env " ";
+  if sz = 1 then emit env "LDA" else emit env "LDA2"
+
+(* v2: store a scalar leaf of a deep path. STA wants value first,
+   address on top. *)
+and codegen_path_store env expr rhs sz =
+  codegen_rhs env rhs sz;
+  emit env " ";
+  codegen_composite_addr env expr;
+  emit env " ";
+  if sz = 1 then emit env "STA" else emit env "STA2"
+
+(* v2: address of element `arr[idx]` where arr is an array-typed
+   path (e.g. a struct's array field). Returns the element size. *)
+and codegen_arrayfield_addr env arr idx =
+  let esz =
+    (match composite_node_typ env arr with
+     | Ast.TypArray (e, _) -> resolve_size env e
+     | _ -> failwith "cannot index non-array path") in
+  codegen_composite_addr env arr;
+  emit env " ";
+  codegen_rhs env idx 2;
+  if esz <> 1 then emit env " #%04x MUL2" esz;
+  emit env " ADD2";
+  esz
+
+(* v2: `dst = src` for same-type struct or array values — a byte
+   copy with
+   both pointers stashed (rstack [src dst], dst on top). LDA leaves
+   one byte under the short dst address, so each byte zero-extends
+   (`#00 SWP`, the usual idiom) before SWP2. Per byte the main stack
+   goes [] -> [dst src] -> [] and the rstack invariant is restored
+   via ROT2/STH2, so single-evaluation index expressions stay
+   single-evaluation:
+     STH2kr STH2r STH2kr ROT2 STH2 #k ADD2 LDA #00 SWP SWP2 #k ADD2 STA
+   then both pointers pop. *)
+and codegen_whole_copy env dst src size =
+  codegen_composite_addr env src;
+  emit env " STH2 ";
+  codegen_composite_addr env dst;
+  emit env " STH2";
+  for k = 0 to size - 1 do
+    emit env " STH2kr STH2r STH2kr ROT2 STH2 #%04x ADD2 LDA #00 SWP SWP2 #%04x ADD2 STA" k k
+  done;
+  emit env " STH2r POP2 STH2r POP2"
 
 (* Total conditions (proposal 8): JCI tests one byte, so a short
    condition would test only its low byte and leak the high one. Reduce
@@ -701,7 +1114,9 @@ and codegen_cond env = function
   | RawLit _ as e -> codegen_expr env e
   | e ->
     codegen_expr env e;
-    if expr_is_u8 env e then () else emit env " #0000 NEQ2"
+    (* Byte-width values (unsigned or signed) test as-is; anything
+       wider reduces via #0000 NEQ2. *)
+    if expr_is_u8 env e || expr_is_s8 env e then () else emit env " #0000 NEQ2"
 
 let rec codegen_stmt env stmt =  match stmt with
   | ExprStmt expr ->
@@ -718,9 +1133,9 @@ let rec codegen_stmt env stmt =  match stmt with
     | None -> codegen_expr env expr);
     emit env " JMP2r\n"
   | If (condition, then_body, elifs, else_body) ->
-    let then_label = new_local_label env "if_then" in
-    let else_label = new_local_label env "if_else" in
-    let end_label = new_local_label env "if_end" in
+    let then_label = new_local_label env "it" in
+    let else_label = new_local_label env "ie" in
+    let end_label = new_local_label env "ix" in
 
     codegen_cond env condition;
     emit env " ?&%s\n" then_label;
@@ -734,8 +1149,8 @@ let rec codegen_stmt env stmt =  match stmt with
       emit env " !&%s\n" end_label;
       emit env "&%s\n" else_label;
       List.iter (fun (cond, body) ->
-        let elif_then = new_local_label env "elif_then" in
-        let elif_else = new_local_label env "elif_else" in
+        let elif_then = new_local_label env "et" in
+        let elif_else = new_local_label env "ee" in
         codegen_cond env cond;
         emit env " ?&%s\n" elif_then;
         emit env " !&%s\n" elif_else;
@@ -751,9 +1166,9 @@ let rec codegen_stmt env stmt =  match stmt with
       emit env "&%s\n" end_label
     end
   | While (condition, body) ->
-    let loop_label = new_local_label env "while" in
-    let cont_label = new_local_label env "while_cont" in
-    let end_label = new_local_label env "while_end" in
+    let loop_label = new_local_label env "wl" in
+    let cont_label = new_local_label env "wc" in
+    let end_label = new_local_label env "wx" in
     (* while(cond){body} ->
        &loop <cond> ?&cont !&end &cont <body> !&loop &end
        (JCI pops bool; true -> body, false -> end) *)
@@ -779,15 +1194,15 @@ let rec codegen_stmt env stmt =  match stmt with
     let end_load =
       match end_expr with
       | IntLit _ | Ident _ ->
-        let tmp = add_local_var env (new_local_label env "for_end") Ast.TypU16 in
+        let tmp = add_local_var env (new_local_label env "fv") Ast.TypU16 in
         codegen_rhs env end_expr 2;
         emit env " .%s STZ2\n" tmp;
         (fun () -> emit env ".%s LDZ2" tmp)
       | _ -> (fun () -> codegen_rhs env end_expr 2)
     in
-    let loop_label = new_local_label env "for" in
-    let cont_label = new_local_label env "for_cont" in
-    let end_label = new_local_label env "for_end" in
+    let loop_label = new_local_label env "fr" in
+    let cont_label = new_local_label env "fc" in
+    let end_label = new_local_label env "fx" in
     (* for i in start..end == while(i < end) { body; i++ } *)
     emit env "&%s\n" loop_label;
     emit env ".%s LDZ2 " addr;
@@ -809,10 +1224,15 @@ let rec codegen_stmt env stmt =  match stmt with
       let addr = add_local_var env name typ in
       match init with
       | Some expr ->
-        let size = resolve_size env typ in
-        codegen_rhs env expr size;
-        emit_mod_reduce env typ;
-        if size = 1 then emit env " .%s STZ\n" addr else emit env " .%s STZ2\n" addr
+        (match typ with
+         | Ast.TypArray _ ->
+           (* Whole-array init copies (checked same type/length). *)
+           codegen_whole_copy env (Ast.Ident (name, Token.nopos)) expr (resolve_size env typ)
+         | _ ->
+           let size = resolve_size env typ in
+           codegen_rhs env expr size;
+           emit_mod_reduce env typ;
+           if size = 1 then emit env " .%s STZ\n" addr else emit env " .%s STZ2\n" addr)
       | None -> ()
     end else begin
       (* Global variable - use zero-page addressing (label form;
@@ -830,11 +1250,15 @@ let rec codegen_stmt env stmt =  match stmt with
       in
       match init with
       | Some expr ->
-        codegen_rhs env expr size;
-        emit_mod_reduce env typ;
-        (* Label form, like every other store: raw `$hh` does not
-           assemble to a zero-page address in drifblim. *)
-        if size = 1 then emit env " .%s STZ\n" name else emit env " .%s STZ2\n" name
+        (match typ with
+         | Ast.TypArray _ ->
+           codegen_whole_copy env (Ast.Ident (name, Token.nopos)) expr size
+         | _ ->
+           codegen_rhs env expr size;
+           emit_mod_reduce env typ;
+           (* Label form, like every other store: raw `$hh` does not
+              assemble to a zero-page address in drifblim. *)
+           if size = 1 then emit env " .%s STZ\n" name else emit env " .%s STZ2\n" name)
       | None -> ()
     end
   | ConstDecl (name, typopt, expr) ->
@@ -866,6 +1290,19 @@ let rec codegen_stmt env stmt =  match stmt with
     end
   | BrkStmt ->
     emit env "BRK\n"
+  | Assert (expr, loc) ->
+    (* Proposal 11: total the condition; on false print the baked
+       location and halt. A failing assert aborts to the emulator
+       (BRK), even inside a plain fn — that is the point. *)
+    let ok_label = new_local_label env "ak" in
+    let loop_label = new_local_label env "al" in
+    let label = make_string_label env (Printf.sprintf "assert failed at %s\n" loc) in
+    codegen_cond env expr;
+    emit env " ?&%s\n" ok_label;
+    emit env ";%s &%s LDAk .Console/write DEO INC2 LDAk ?&%s POP2\n"
+      label loop_label loop_label;
+    emit env "BRK\n";
+    emit env "&%s\n" ok_label
   | Goto lbl ->
     emit env "!&%s\n" lbl
   | Label lbl ->
@@ -875,24 +1312,42 @@ let rec codegen_stmt env stmt =  match stmt with
     (* Determine size for STH *)
     let size =
       match expr with
-      | Ident name ->
+      | Ident (name, _) ->
         (try (try List.assoc name env.local_vars with Not_found -> List.assoc name env.global_vars).size
          with Not_found -> 2)
-      | IntLit n -> if n <= 255 then 1 else 2
-      | Field (Index (Ident arr, _), fname) ->
+      | IntLit (n, _) -> if n <= 255 then 1 else 2
+      | Field (Index (Ident (arr, _), _), fname) ->
         (match is_struct_array env arr with
         | Some sname ->
           (match try Some (struct_field env sname fname) with Not_found -> None with
           | Some (_, sz) -> sz
           | None -> 2)
         | None -> 2)
-      | Field (Ident v, fname) ->
+      | Field (Ident (v, _), fname) ->
         (match is_struct_var env v with
         | Some (sname, _) ->
           (match try Some (struct_field env sname fname) with Not_found -> None with
           | Some (_, sz) -> sz
           | None -> 2)
         | None -> 2)
+      | Field (e, fname) ->
+        (* v2: sized by the leaf type of the chained path. *)
+        (match e with
+         | Ident _ | Index (Ident _, _) -> 2
+         | _ ->
+           (match try Some (composite_node_typ env (Field (e, fname))) with _ -> None with
+            | Some (Ast.TypU8 | Ast.TypBool | Ast.TypI8) -> 1
+            | _ -> 2))
+      | Index (arr, _) ->
+        (* v2: sized by the array-typed path's element. *)
+        (match arr with
+         | Ident _ -> 2
+         | _ ->
+           (match try Some (composite_node_typ env arr) with _ -> None with
+            | Some (Ast.TypArray (Ast.TypU8, _)) | Some (Ast.TypArray (Ast.TypBool, _)) -> 1
+            | Some (Ast.TypPointer Ast.TypU8) | Some (Ast.TypPointer Ast.TypBool) -> 1
+            | Some (Ast.TypArray (Ast.TypI8, _)) | Some (Ast.TypPointer Ast.TypI8) -> 1
+            | _ -> 2))
       | _ -> 2
     in
     if size = 1 then emit env " STH\n" else emit env " STH2\n"
@@ -900,14 +1355,19 @@ let rec codegen_stmt env stmt =  match stmt with
     emit env "STHr\n"
   | RPeek ->
     emit env "STHkr\n"
+  | Drop e ->
+    (* The checker rejected void/struct/array, so exactly 1-2 bytes. *)
+    codegen_expr env e;
+    if expr_is_u8 env e then emit env " POP\n" else emit env " POP2\n"
   | InferDecl _ ->
     failwith "internal error: unelaborated `:=` reached codegen"
   | RawStmt s ->
     emit env "%s\n" s
 
 let codegen_func env (fn_def : Ast.func) =
-  Buffer.add_string env.code (sprintf "\n@%s ( -- )\n" fn_def.name);
-  start_func env fn_def.name;
+  let alias = fal env fn_def.name in
+  Buffer.add_string env.code (sprintf "\n@%s ( %s -- )\n" alias fn_def.name);
+  start_func env alias;
   env.in_event <- fn_def.is_event;
   (* Size `return expr` to the declared width so callers read exactly
      what the signature promises (byte callees compose). *)
@@ -933,7 +1393,7 @@ let codegen_func env (fn_def : Ast.func) =
 (* Read a sprite asset file (.chr = 16 bytes/tile 2bpp planar,
    .icn = 8 bytes/tile 1bpp) into a byte list. The loader resolves
    the path against the declaring file, so it is absolute here. *)
-let read_asset_bytes name path =
+let rec read_asset_bytes name path =
   let ic =
     try open_in_bin path
     with Sys_error _ ->
@@ -948,17 +1408,74 @@ let read_asset_bytes name path =
       String.lowercase_ascii (String.sub path (dot + 1) (String.length path - dot - 1))
     with Not_found -> ""
   in
-  let tile =
-    match ext with
-    | "chr" -> 16
-    | "icn" -> 8
-    | _ -> failwith (Printf.sprintf
-      "asset `%s`: unknown type `%s` (want .chr for 2bpp or .icn for 1bpp)" name path)
+  if ext = "wav" then read_wav_bytes name path s
+  else begin
+    let tile =
+      match ext with
+      | "chr" -> 16
+      | "icn" -> 8
+      | _ -> failwith (Printf.sprintf
+        "asset `%s`: unknown type `%s` (want .chr for 2bpp, .icn for 1bpp, or .wav for 8-bit mono audio)" name path)
+    in
+    if n mod tile <> 0 then
+      failwith (Printf.sprintf
+        "asset `%s`: %d bytes is not a multiple of %d (one %s tile)" name n tile ext);
+    List.init n (fun i -> Char.code s.[i])
+  end
+
+(* Read a WAV file into raw sample bytes. Only canonical 8-bit mono
+   PCM at 44100Hz is accepted — that is exactly what Uxn plays
+   natively (unsigned bytes, 128-center), so no conversion exists to
+   get wrong. Anything else is a clear error, not a silent
+   resample. Unknown chunks are skipped per the RIFF rules. *)
+and read_wav_bytes name path s =
+  let n = String.length s in
+  let fail msg = failwith (Printf.sprintf "asset `%s`: %s (`%s`)" name msg path) in
+  let need off len what =
+    if off < 0 || len < 0 || off + len > n then fail ("truncated " ^ what)
   in
-  if n mod tile <> 0 then
-    failwith (Printf.sprintf
-      "asset `%s`: %d bytes is not a multiple of %d (one %s tile)" name n tile ext);
-  List.init n (fun i -> Char.code s.[i])
+  let u16le off = Char.code s.[off] + Char.code s.[off + 1] * 256 in
+  let u32le off =
+    Char.code s.[off] + Char.code s.[off + 1] * 256
+    + Char.code s.[off + 2] * 65536 + Char.code s.[off + 3] * 16777216
+  in
+  let tag off = String.sub s off 4 in
+  need 0 12 "header";
+  if tag 0 <> "RIFF" || tag 8 <> "WAVE" then fail "not a RIFF/WAVE file";
+  let fmt = ref None in
+  let data = ref None in
+  let pos = ref 12 in
+  while !pos + 8 <= n do
+    let id = tag !pos in
+    let size = u32le (!pos + 4) in
+    let body = !pos + 8 in
+    if body > n then fail "chunk overruns file";
+    (match id with
+    | "fmt " ->
+      need body 16 "fmt chunk";
+      (match !fmt with Some _ -> () | None -> fmt := Some body)
+    | "data" ->
+      (match !data with Some _ -> () | None -> data := Some (body, size))
+    | _ -> ());
+    pos := body + size + (size mod 2)
+  done;
+  let fbody =
+    match !fmt with
+    | Some b -> b
+    | None -> fail "no fmt chunk"
+  in
+  if u16le fbody <> 1 then fail "only PCM (format 1) supported";
+  if u16le (fbody + 2) <> 1 then fail "only mono supported";
+  if u32le (fbody + 4) <> 44100 then
+    fail "only 44100Hz supported (uxn plays at 44100)";
+  if u16le (fbody + 14) <> 8 then
+    fail "only 8-bit samples supported (uxn plays u8 natively)";
+  match !data with
+  | None -> fail "no data chunk"
+  | Some (dboff, dsize) ->
+    need dboff dsize "data";
+    if dsize = 0 then fail "empty data chunk";
+    List.init dsize (fun i -> Char.code s.[dboff + i])
 
 let encode_string s =
   let buf = Buffer.create 64 in
@@ -996,13 +1513,33 @@ let codegen_program program =
   (* Proposal 9: record every signature up front so forward calls get
      argument promotion too — the checker pre-pass makes them valid,
      this makes them correctly sized. Return widths make call results
-     composable (a `-> u8` callee leaves one byte, not two). *)
+     composable (a `-> u8` callee leaves one byte, not two). Short
+     labels are assigned in the same sweep (see func_alias). *)
   List.iter (function
     | FuncDecl f ->
       env.func_sigs <- (f.name, List.map (fun (p: Ast.param) -> resolve_size env p.typ) f.params) :: env.func_sigs;
       (match f.return_typ with
-      | Some t -> env.func_rets <- (f.name, resolve_size env t) :: env.func_rets
-      | None -> ())
+      | Some t ->
+        env.func_rets <- (f.name, resolve_size env t) :: env.func_rets;
+        env.func_ret_sign <- (f.name, t = Ast.TypI8 || t = Ast.TypI16) :: env.func_ret_sign
+      | None -> ());
+      (* Short label `fnN`, skipping any N whose name a non-function
+         decl already owns (a data blob named `fn3` must keep it) or a
+         previous alias took — the loader rejects true duplicates,
+         this only dodges the alias pattern itself. *)
+      let taken a =
+        List.exists (fun d ->
+            match Ast.decl_name d with
+            | Some (_, n) -> n = a
+            | None -> false) program
+        || List.exists (fun (_, b) -> b = a) env.func_alias
+      in
+      let rec free k =
+        let a = sprintf "fn%d" k in
+        if taken a then free (k + 1) else a
+      in
+      let alias = free (List.length env.func_alias) in
+      env.func_alias <- env.func_alias @ [(f.name, alias)]
     | _ -> ()) program;
 
   List.iter (fun decl ->
@@ -1030,7 +1567,7 @@ let codegen_program program =
           let addr_str = sprintf "$%02x" addr_val in
           let info = { name; addr = addr_str; is_local = false; typ; size } in
           env.global_vars <- (name, info) :: env.global_vars;
-          env.zero_order <- ZVar (name, size) :: env.zero_order;
+          env.zero_order <- ZVar (name, size, "") :: env.zero_order;
           addr_str
       in
       (match init with
@@ -1044,9 +1581,9 @@ let codegen_program program =
     | GlobalConstDecl (name, None, expr) ->
       env.constants <- name :: env.constants;
       (match expr with
-      | IntLit n ->
+      | IntLit (n, _) ->
         Buffer.add_string env.func_code (sprintf "|%04x @%s\n" n name)
-      | Ident id ->
+      | Ident (id, _) ->
         Buffer.add_string env.func_code (sprintf "|%s @%s\n" id name)
       | _ ->
         Buffer.add_string env.func_code (sprintf "|0000 @%s\n" name))
@@ -1066,7 +1603,7 @@ let codegen_program program =
           let addr_str = sprintf "$%02x" addr_val in
           let info = { name; addr = addr_str; is_local = false; typ; size } in
           env.global_vars <- (name, info) :: env.global_vars;
-          env.zero_order <- ZVar (name, size) :: env.zero_order;
+          env.zero_order <- ZVar (name, size, "") :: env.zero_order;
           addr_str
       in
       codegen_rhs env expr size;
@@ -1112,18 +1649,30 @@ let codegen_program program =
       end
     | DataDecl d ->
       Buffer.add_string env.data (sprintf "@%s [ " d.data_name);      List.iter (fun b -> Buffer.add_string env.data (sprintf "%02x " b)) d.data_bytes;
-      Buffer.add_string env.data "]\n"
+      Buffer.add_string env.data "]\n";
+      (* Proposal 10: blobs address like global arrays (`;name`), so
+         indexing reuses the existing absolute math. The addr string
+         is bookkeeping only — never emitted. *)
+      let n = List.length d.data_bytes in
+      let info = { name = d.data_name; addr = "$0000"; is_local = false;
+        typ = Ast.TypArray (Ast.TypU8, n); size = n } in
+      env.global_vars <- (d.data_name, info) :: env.global_vars;
+      env.data_order <- d.data_name :: env.data_order
     | AssetDecl a ->
       let bytes = read_asset_bytes a.asset_name a.asset_path in
       Buffer.add_string env.data (sprintf "@%s [ " a.asset_name);
       List.iter (fun b -> Buffer.add_string env.data (sprintf "%02x " b)) bytes;
-      Buffer.add_string env.data "]\n"
+      Buffer.add_string env.data "]\n";
+      let info = { name = a.asset_name; addr = "$0000"; is_local = false;
+        typ = Ast.TypArray (Ast.TypU8, 0); size = 0 } in
+      env.global_vars <- (a.asset_name, info) :: env.global_vars;
+      env.data_order <- a.asset_name :: env.data_order
     | BufferDecl b ->
       let esz = (match b.buf_elem with
-        | Ast.TypU8 | Ast.TypBool -> 1
-        | Ast.TypU16 -> 2
+        | Ast.TypU8 | Ast.TypBool | Ast.TypI8 -> 1
+        | Ast.TypU16 | Ast.TypI16 -> 2
         | Ast.TypStruct s -> resolve_size env (Ast.TypStruct s)
-        | _ -> failwith (Printf.sprintf "buffer `%s` must hold u8/u16/bool" b.buf_name)) in
+        | _ -> failwith (Printf.sprintf "buffer `%s` must hold u8/u16/i8/i16/bool" b.buf_name)) in
       let total = esz * b.buf_len in
       let addr = env.next_buffer_addr in
       if addr + total > 0x10000 then
@@ -1142,16 +1691,17 @@ let codegen_program program =
       | None -> env.meta <- Some (title, author))
     | StructDecl s ->
       (* Type-level only: field (offset, size) table for `.field`
-         access. The checker validated fields and order; holders were
-         already allocated by size. Fields are scalar, so typ_size
-         cannot fail here. *)
+         access, plus the field types for resolving nested/array
+         paths. The checker validated fields and order (inner structs
+         first), so resolve_size cannot fail here. *)
       let (_, fields) =
         List.fold_left (fun (off, acc) (fname, ftyp) ->
-          let sz = typ_size ftyp in
+          let sz = resolve_size env ftyp in
           (off + sz, (fname, (off, sz)) :: acc)
         ) (0, []) s.struct_fields
       in
-      env.structs <- (s.struct_name, List.rev fields) :: env.structs
+      env.structs <- (s.struct_name, List.rev fields) :: env.structs;
+      env.struct_types <- (s.struct_name, s.struct_fields) :: env.struct_types
     | RawDecl raw ->
       (* Emitted with the data section (main RAM): raw blocks usually
          define data/tables, which drifblim forbids in zero-page.
@@ -1185,7 +1735,7 @@ let codegen_program program =
     Buffer.add_string env.data
       (sprintf "@etal_meta [ 00 %s0a %s00 $2 ]\n" (hex_of title) (hex_of author));
     Buffer.add_string env.entry_code ";etal_meta .System/metadata DEO2\n");
-  Buffer.add_string env.entry_code ";main JSR2\n";
+  Buffer.add_string env.entry_code (sprintf ";%s JSR2\n" (fal env "main"));
   Buffer.add_string env.entry_code "HALT\n";
   Buffer.add_string env.entry_code "BRK\n\n";
 
@@ -1196,7 +1746,7 @@ let codegen_program program =
     Buffer.add_string buf "|00\n";
     List.iter (fun item ->
       match item with
-      | ZVar (name, size) ->
+      | ZVar (name, size, _) ->
         Buffer.add_string buf (sprintf "    @%s $%d\n" name size)
       | ZGroup (gname, base_size, fields) ->
         Buffer.add_string buf (sprintf "    @%s $%d" gname base_size);
@@ -1212,10 +1762,31 @@ let codegen_program program =
       List.exists (fun (n, _, _) -> n = name) env.buffer_order
     in
     List.iter (fun (_, info) ->
-      if not (List.mem_assoc info.name env.groups) && not (is_buffered info.name) then
+      if not (List.mem_assoc info.name env.groups)
+        && not (is_buffered info.name)
+        && not (List.mem info.name env.data_order) then
         Buffer.add_string buf (sprintf "    @%s $%d\n" info.name info.size)
     ) (List.rev env.global_vars);
     Buffer.add_string buf "\n"
+  end;
+
+  if !zp_report then begin
+    let add map (func, size) =
+      let cur = try List.assoc func map with Not_found -> 0 in
+      (func, cur + size) :: List.remove_assoc func map in
+    let by_func = List.fold_left (fun acc -> function
+      | ZVar (_, size, f) -> add acc ((if f = "" then "(globals)" else f), size)
+      | ZGroup (_, base, fields) ->
+        add acc ("(globals)",
+                 base + List.fold_left (fun a (_, s) -> a + s) 0 fields)
+    ) [] env.zero_order in
+    let ranked = List.sort (fun (_, a) (_, b) -> compare b a) by_func in
+    (* Locals budget under short aliases; show real names instead. *)
+    let real f =
+      try fst (List.find (fun (_, a) -> a = f) env.func_alias)
+      with Not_found -> f in
+    Printf.eprintf "zero-page: %d/256 bytes\n" env.zp_used;
+    List.iter (fun (f, n) -> Printf.eprintf "  %-24s %3d\n" (real f) n) ranked
   end;
 
   Buffer.add_string buf (Buffer.contents env.func_code);
@@ -1226,19 +1797,22 @@ let codegen_program program =
   Buffer.add_string buf "\n";
   Buffer.add_string buf (Buffer.contents env.data);
 
-  (* Main-RAM buffers at absolute addresses. *)
-  if List.length env.buffer_order > 0 then begin
-    Buffer.add_string buf "\n";
-    List.iter (fun (name, addr, total) ->
-      Buffer.add_string buf (sprintf "|%04x @%s $%d\n" addr name total)
-    ) env.buffer_order;
-  end;
-
   if List.length env.strings > 0 then begin
     Buffer.add_string buf "\n";
     List.iter (fun (label, s) ->
       Buffer.add_string buf (sprintf "@%s %s\n" label (encode_string s))
     ) env.strings
+  end;
+
+  (* Reserve writable buffers AFTER all emitted bytes. Fixed origins
+     could move the assembler backwards into code (chess exceeds 8KB).
+     References already use labels, so the assembler resolves their
+     final addresses. Reservation sizes, like all TAL numbers, are hex. *)
+  if List.length env.buffer_order > 0 then begin
+    Buffer.add_string buf "\n";
+    List.iter (fun (name, _, total) ->
+      Buffer.add_string buf (sprintf "@%s $%x\n" name total)
+    ) env.buffer_order;
   end;
 
   Buffer.contents buf

@@ -38,20 +38,85 @@ from the emulator source (`SPRITE_2BPP/LAYER/FLIPY/FLIPX`,
 Fixed object rows: `Obj :: struct { x, y, tile, flags }` in
 `buffer objs[16]`, indices are `u16` (255 = no slot), flags are
 visible/solid/layer bits. `obj_spawn/move/hide/hide_all/free`,
-`obj_draw`/`draw_all` (macros), `OBJ_*` consts. Animation is frame
-tables plus per-object base/len/rate/tick with `anim_play/step`.
+`obj_draw`/`draw_all` (macros), `obj_draw_mode` (explicit sprite
+mode per object), `draw_all_layered` (gameplay layers 0–3 back to
+front, so high slots never overdraw foreground), `OBJ_*` consts.
+Animation is an `Anim` row per object (base/len/rate/tick/mode/
+playing) over a shared frame table: `anim_play` (looping),
+`anim_play_mode` (`ANIM_LOOP/ONCE/PINGPONG` — once holds the last
+frame and stops, ping-pong bounces), `anim_stop/start/playing`,
+`anim_step` (stopped rows freeze with the tile untouched).
 
-## collide.ux, scene.ux, menu.ux
+## input.ux
+
+Vector-latch input over game-declared `[1] u8` slots (or 1-byte
+buffers when zero-page is tight): `key_latch`/`cbtn_latch`/
+`mouse_latch` for the vector bodies, `key_take`/`cbtn_take`/
+`mouse_take` delivering each press exactly once (reads clear;
+`mouse_take` ORs live state with latched taps). Macros, so only call
+sites need the devices — same doctrine as `screen.ux` — and zero
+library zero-page. Edge detection stays game-side (see `mouse_poll`
+and the menu polls); position ports never clear and stay raw reads.
+
+## fmt.ux
+
+`fmt_u8(dst, v)` writes three digits plus NUL (`7` becomes `"007"`)
+into a 4-byte caller buffer: fixed width keeps columns aligned, and
+subtraction loops keep every temporary in `u8`. Unsigned only;
+callers own the sign.
+
+## timer.ux
+
+Deadline timers for UI sequencing: `timer_set(i, n)` arms one of 4
+countdowns, `timer_tick()` runs once per frame, `timer_ready(i)`
+reads true once the count hits zero (level semantics — a missed poll
+fires late, never lost; re-arm to reuse). Main-RAM pool, zero
+zero-page cost; over 255 frames chains. Indices unchecked, like all
+indexing.
+
+## lerp.ux
+
+`lerp8(a, b, k, n)` walks byte `a` to byte `b` as `k` runs `0..n`:
+`(a*(n-k) + b*k)/n`, total for all `u8` inputs (the numerator tops
+out at `255*n`, always inside `u16` — no wrap, no sign discipline,
+either direction). Frame counters and pixel slides; wider ranges
+want `fix16`. Preconditions: `n >= 1`, `0 <= k <= n`.
+
+## collide.ux, scene.ux, menu.ux, mouse.ux, mouse.ux
 
 `layers_hit` (same layer and at least one solid — edible food,
 solid walls, pass-through ghosts), `obj_cell_hit` (8px cells),
 `obj_aabb_hit` (explicit sizes). Scenes are a game-side
-`match scene` dispatch; the module holds the id, `scene_go`, and
-`wipe`. Menus are edge polls (`menu_poll` — call once per frame),
-`menu_items/next/prev` with wraparound; act on `poll & MASK`
-idioms, never equality. The `examples/objdemo/` game (untracked,
-like the other examples) plays all phases together: title menu,
-animated player, layered walls, score-to-win, game-over loop.
+`match scene` dispatch; the module holds the id, `scene_prev`,
+`scene_go`, `wipe`, and an 8-deep pause stack (`scene_push/pop`
+— pop resumes exactly where the game was; over/underflow
+ignored). Menus are edge polls (`menu_poll` — call once per
+frame), `menu_items/next/prev` with wraparound; act on `poll & MASK`
+idioms, never equality — or name it with `ctl_down(cur, mask)` from
+`input.ux` (same mask test, stateless, over a live port or a taken
+latch). Mouse is the same edge shape over
+game-read state (`mouse_poll(Mouse.state)`, `MOUSE_LEFT/MIDDLE/
+RIGHT/X1` from the emulator's SDL mapping, plus `mouse_down(cur,
+mask)` which centralizes the right-button quirk: `&` for every mask
+except `MOUSE_RIGHT`, which tests `==`); position and scroll
+stay raw port reads (scroll is one-shot with inverted Y) — live
+clicks need a display, so the gate feeds synthetic states. The
+`examples/objdemo/` game (untracked, like the other examples)
+plays all phases together: title menu, animated player, layered
+walls, score-to-win, game-over loop.
+
+## gesture.ux
+
+Press/hold/drag over caller-provided values — no devices touched, no
+imports, so it never forces a vector on anyone. The low-code builder
+mapping: `on_click(rect)` is an edge from `menu_poll`/`mouse_poll`
+plus `pt_in_rect`; `on_hold` is `hold_poll` (fires on press, then
+every `rate` frames after `delay` frames, `0` = every frame; release
+resets); `drag_mouse` is `drag_reset` on press plus `drag_moved` per
+frame (re-anchors every poll, so a missed frame reports one move,
+never a stale offset); `press_key` stays `key_latch`/`key_take` in
+`input.ux`. Hold slots are a fixed 4-pool in main RAM and drag keeps
+one anchor pair, so emitters allocate them by small index.
 
 ## fix16.ux
 
@@ -101,6 +166,64 @@ turns (0–255 = full circle), values fix16. `trig_init()` builds a
 so `cos256(a)` is `sin256(a+64)` — free via `u8` wraparound. No
 bulk literals, no new syntax: the table generates itself from
 `fix16.ux`. `sin256`/`cos256`, `taylor_sin` (exposed for testing).
+
+## audio.ux, song.ux
+
+Uxn pitch bytes are MIDI note numbers (verified against the
+emulator source: 69 renders 441Hz; 0–107 audible, 108+ silent;
+high bit = play once, clear = loop); samples are unsigned 8-bit
+mono at 44100Hz. `audio.ux` holds `NOTE_C1`–`NOTE_B7` plus `REST`,
+a stock 32-byte square wave (`sq32`), and a fire-and-forget `sfx`
+(one-shot voice). `song.ux` is a four-voice tick sequencer over `Track` rows
+(`notes: [24] Note` plus per-voice cursor, sample and envelope —
+struct v2 in action): `track_next(t)` advances voice `t` and returns
+the fired pitch or REST — no ports touched, headless-testable;
+`track_fire0/1/2/3` macros write Audio0-3 (macros, so only fired
+voices need their device declared); `song_tick()` drives voice 0,
+`song_tick_all()` (a macro, same reason) drives all four. Long
+samples play ~1:1 at middle C. Rests sustain through the envelope
+tail (no hard stops v1). Needs the `Audio` devices fired (copy
+block in `audio.ux` header); web builds are silent (uxn5 has no
+audio device).
+
+## file.ux
+
+Varvara FileA helpers (verified against the emulator source:
+native operations run inline inside the DEO — `fread`/`fwrite`/
+`stat`/`unlink` with the count in `success`; web completes later
+through the File vector). One split-phase API covers both:
+`file_read_req` / `file_write_req` / `file_stat_req` /
+`file_delete_req` macros initiate (setting `file_pending`),
+`FileA.success` answers at once on native, and `file_poll()` /
+`file_on_event()` (for the game's `FileA.vector` handler) record
+completion portably into `file_done`/`file_result`. Stat reports
+into RAM: `len` lowercase hex digits of size (`000a`), `-` for
+dirs, `!` for missing, `?` for oversize; reading a directory
+yields `HHHH<TAB>name[/]<NL>` lines. Never request zero bytes (a
+zero `success` reads as "not done yet" — stat first). Needs the
+`FileA` device (copy block in `file.ux` header); paths resolve
+against the emulator's working directory.
+
+## font.ux
+
+8×8 1bpp text over a game-declared Screen: `font8x8` holds printable
+ASCII 32–126 (95 glyphs × 8 rows, MSB-first, 760 bytes — the import
+cost), `draw_char` / `draw_char_mode` blit one cell (any byte is
+safe: `glyph_clamp` folds outside 32–126 to `?`), and
+`draw_string` walks a NUL-terminated string — literal or buffer, 8px
+per cell, `\n` starting the next row. `glyph_addr` is the pure
+address math both macros share (gated headlessly in `test_font`;
+glyph shapes are eyeballed from the `@font8x8` blob). Needs the
+`Screen` device at call sites only.
+
+## string.ux
+
+NUL-terminated strings over `&u8` addresses: literals, `&blob`
+data, and address globals (`msg: &u8 = "hi";`) flow into
+`strlen` / `streq` (pure) and `strcopy` (macro into a caller
+buffer — never a literal). Buffers do not convert to addresses,
+so length/count loops over them stay game-side (three lines, as
+in the harness). No concatenation, no slicing, no headers.
 
 ## gfx3d.ux
 

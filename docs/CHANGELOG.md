@@ -55,7 +55,94 @@ wireframe) with a spinning-cube demo. Dead-function elimination
 (reachable-from-main, raw disables) so libraries don't eat zero-page.
 macOS row: `vendor/macos-arm64/uxn2` vendored; the compiler selects
 the VM row per host OS (SDL2 runtime fix still open — see
-vendor/BUILD.md). Software 3D: `trig.ux`
+vendor/BUILD.md). Audio: `.wav` assets (8-bit mono 44100Hz, zero
+conversion), `audio.ux` (MIDI notes, square wave, one-shot sfx),
+`song.ux` tick sequencer, and a Megalovania demo (web builds stay
+silent — uxn5 has no audio device). Structs v2: nested structs,
+fixed array fields, chained paths (`rows[i].pos.x`), and same-type
+whole-value `=` (stashed-pointer byte copy; params/returns/compare
+stay field-wise), with a `test_struct` console gate and golden
+coverage. File device: `lib/file.ux` split-phase FileA macros
+(request, inline `success` on native, `file_poll`/`file_on_event`
+for the web vector; stat-first, never zero bytes), CWD-relative
+paths, `test_file` round-trip gate. Font/text: `lib/font.ux`
+in-repo 8×8 font (ASCII 32–126) with `draw_char` / `draw_string`
+macros (`\n` rows, `?` clamp) and gated `glyph_clamp` /
+`glyph_addr` math; also fixes silent stride-2 reads when indexing
+string literals. Multitrack audio: `song.ux` v2 `Track` rows
+through Audio0-3 (`track_next` pure per voice, `track_fire0-3`
+macros, `song_tick` / `song_tick_all`; single-song API retired,
+Megalovania migrated). Mouse: `lib/mouse.ux` edge polls
+(`mouse_poll`, `MOUSE_*` from the SDL mapping) over a corrected
+Mouse block, synthetic-state gate. Arrays: same-type/length whole
+copy with `=` (assign + init); every other whole-array use is a
+compile error. Scenes: pause stack (`scene_push/pop`), `scene_prev`,
+layered drawing (`draw_all_layered`, `obj_draw_mode`). Diagnostics:
+`file:line:col` errors with source echo and clean `etal: error:`
+exit-1 (declaration granularity in the checker); `assert E;`
+halts with a baked location, gated both passing and failing.
+Unused-discovery warnings (globals, stored consts, locals, params,
+data/assets — never functions/macros/labels) with positions.
+Animation:
+`Anim` rows with `LOOP/ONCE/PINGPONG` modes, `anim_stop/start`
+freeze/resume plus `anim_playing` query. Inline `raw {}` in bodies
+for TAL the typed surface cannot reach (golden-pinned). Data blobs
+read as arrays (inline: index + whole-copy; file assets: index
+only); string literals index with byte stride; `lib/string.ux`
+(`strlen`/`streq`/`strcopy`) over `&u8` views. Software
+3D: `trig.ux`
 (self-built turns256 sine table) and `gfx3d.ux` (rotate/project/DDA
 wireframe) with a spinning-cube demo. Dead-function elimination
 (reachable-from-main, raw disables) so libraries don't eat zero-page.
+Address decay (bare arrays and `&name` flow into pointer slots),
+exact checker lines via leaf positions, and zero-page-sized branch
+scaffolding: two-letter label stems plus short `@fnN` function labels
+(real name in the header comment) so large programs fit drifblim's
+fixed `$4800` symbol dictionary (chess needed it at ~20KB of names).
+Font-bis: the `(`/`)` glyph comments nested the lexer comment and ate a
+whole font row (`CHESS` rendered as `DIFTT`) — glyph names are words now
+(`lparen`/`rparen`, lexical doc footgun note), and `test_font` asserts
+blob content, not just address math. Input-bis: `Controller.key` polling
+can't work (the VM self-clears the port between frames) — chess latches
+keys/buttons in `on_key`/`on_mouse` vectors; mouse coords are window
+pixels (zoom ≠ 1 miscalibrates, upstream quirk), both noted in limitations.
+Chess input pass: game-drawn cursor (the VM hides the system one),
+`>` selection markers with mouse hover tracking, and full keyboard
+play of every menu — arrows/W/S move, Enter/Space/Z confirm — over a
+latched controller-button edge mask (`cbtnbuf`, taps can't fall
+between frames). Headless-harness proven: cursor follows the mouse,
+arrows + Enter leave the menu, S + Space start as Black, ESC
+pauses/resumes with stable stacks.
+Chess material counter is sign + two digits (`mat_show`, gated by
+`test_material.ux`): a single `48+d` digit showed `:`/`<` past a
+9-point gap. The bot's reply glides over 10 frames (buffer-resident
+lerp, zero zero-page cost; castling slides only the king), and
+`docs/examples/chess.md` covers rules/bot/UI notes. Human drops arm
+the same slide, with the bot reply chained off its last frame (no
+overwrite, free thinking beat; cap/status ride buffer scratch).
+Menu QUIT writes nonzero `System/state` for a real exit — `brk`
+only ended one frame.
+Phase-1 diagnostics from the chess session: calls into `event`
+vectors are compile errors (only `main` exempt; gated by
+`check_fail`), bare valued calls warn with `_ = expr;` as the
+explicit-discard idiom (new and comments
+holding whitespace-only inner parens warn at lex time (the exact
+`( ( )` trap, gated in `test_warn.ux`).
+Signed `i8`/`i16`: two's complement at the existing widths, strict
+lattice (same sign widens, bitwise reinterprets same-width, fitting
+literals adapt, signed `/`/`%` rejected), sign-flip comparisons and
+sign-extending promotion in codegen; gated by `test_signed.ux` (17
+bytes incl. the `0xff` sign-extension proof) plus four `check_fail`
+lattice locks.
+`lib/lerp.ux` (`lerp8`, total for all `u8` inputs, gated by
+`test_lerp.ux`) for slides/fades without hand-rolled promotion.
+`--zp-report` prints zero-page usage as total plus per-function
+bytes under real names (the shape spillover needs). `tests/pixels.sh`
++ `tests/pixels/` run chess headless through the vendored uxn5 core
+and assert real pixels (render, input vectors, both glides, stack
+stability, quit-by-state); local-only like `check.sh` (needs node).
+Phase-3 stdlib from the chess session: `lib/input.ux` (vector-latch
+macros over game-declared `[1] u8` slots, zero library zero-page;
+chess migrated as production proof), `lib/fmt.ux` (`fmt_u8` fixed
+3-digit rendering), `lib/timer.ux` (4-slot main-RAM deadline pool
+with level `timer_ready`).

@@ -1,0 +1,53 @@
+( lib/mouse.ux — button-edge polls over game-read mouse state.
+  Position and scroll stay raw port reads (there is nothing to
+  abstract: `Mouse.x` / `Mouse.y`); this module is the input/state
+  half, mirroring menu_poll. Games declare Mouse (copy this block,
+  grounded in uxn2/src/uxn2.c mouse_* — note scroll lives at 9a/9c
+  as one-shot deltas with inverted Y, zeroed after the vector):
+      device Mouse 144 {
+          vector: 2
+          x: 2
+          y: 2
+          state: 1
+          pad: 3
+          scrollx: 2
+          scrolly: 2
+      }
+  Button masks follow the emulator's SDL mapping
+  (get_mouse_button: left 1, middle 4, right 3 — right overlaps
+  bit 0, so test it with ==, the rest with &). Wire
+  `Mouse.vector = &on_mouse` and poll `Mouse.state` there (or once
+  per frame); headless runs can't click, so the gate below feeds
+  synthetic states. )
+
+MOUSE_LEFT :: 1;
+MOUSE_MIDDLE :: 4;
+MOUSE_RIGHT :: 3;
+MOUSE_X1 :: 2;
+
+mouse_last: u8 = 0;
+
+( Bits newly down since the last poll (edge, not hold). Call with
+  Mouse.state whenever the mouse vector fires (or per frame). )
+mouse_poll :: fn(cur: u8) -> u8 {
+    pressed: u8 = cur & (mouse_last ^ 255);
+    mouse_last = cur;
+    return pressed;
+}
+
+( Level test with the right-button quirk centralized: every mask
+  tests with &, except MOUSE_RIGHT which tests == (right overlaps
+  bit 0 in the emulator SDL mapping, so & cannot isolate it).
+  Edge version: mask the mouse_poll result the same way. )
+mouse_down :: fn(cur: u8, mask: u8) -> u8 {
+    if mask == MOUSE_RIGHT {
+        if cur == MOUSE_RIGHT {
+            return 1;
+        }
+        return 0;
+    }
+    if cur & mask != 0 {
+        return 1;
+    }
+    return 0;
+}

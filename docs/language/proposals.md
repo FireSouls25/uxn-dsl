@@ -128,7 +128,10 @@ field-offset environments, and the combined Index+Field codegen paths
 in both directions. The shift loop collapses from two lines to one,
 and the desync class disappears by construction.
 (obsolete — implemented on `dev` as scoped, plus locals and strict
-whole-value rejection; see [declarations](declarations.md).)
+whole-value rejection; see [declarations](declarations.md). v2 on
+`dev`: nested structs, fixed array fields, chained paths and
+same-type whole-value `=` via a stashed-pointer byte copy; params,
+returns and comparison stay field-wise.)
 
 ## 5. Ring buffer type — accept as library first, correct the framing
 
@@ -212,28 +215,42 @@ The language covers compute, control flow, memory, sprites and input
 well. The remaining gaps cluster around devices and UI text — fitting,
 since this machine is centered on direct UI work:
 
-- **Audio.** No helpers exist, but nothing blocks it either: declare
-  the Audio ports and write sample addresses, lengths, `ADSR` and
-  `pitch` exactly like screen ports. A `sound` sketch (one-shot blip
+ - **Audio.** Landed on `dev`: `data x = file("*.wav")` embeds
+  8-bit mono 44100Hz samples with zero conversion (anything else is
+  a compile error); `lib/audio.ux` has MIDI note consts, a stock
+  square wave and one-shot `sfx`; `lib/song.ux` sequences `Track`
+  rows through Audio0-3 (`track_next` pure per voice,
+  `track_fire0-3` macros so unfired voices need no device,
+  `song_tick` / `song_tick_all`). A `sound` sketch (one-shot blip
   on eat, using a tiny square-wave blob) is the right first artifact.
-- **Text.** There is no font story: no glyph tables, no
-  `draw_char`/`draw_string`. Orca-style games need these for scores
-  and menus. Recommended as a *library* (`font.ux`: an 8×8 font blob
-  plus blit routines reusing proposal 6's macro pattern), not a
-  compiler feature.
+ - **Text.** Landed on `dev`: `lib/font.ux` is an in-repo 8×8
+  1bpp font (printable ASCII 32–126, 760 bytes) plus `draw_char` /
+  `draw_string` blit macros reusing the reviewed-macro pattern
+  (`\n` newlines, out-of-range clamps to `?`), with pure
+  `glyph_clamp` / `glyph_addr` fns gated headlessly. Scores and
+  menus draw from buffers or literals; the compiler still has no
+  font feature, per the library-first recommendation.
 - **Sprite/pixel mode bits.** The `Screen/sprite` mode nibble (1bpp
   vs 2bpp, layer, flips) and `pixel` fill bits are currently magic
   numbers (`Screen.sprite = 1`). Named `::` constants already express
   these — what's missing is documentation mapping each bit, which
   belongs in [devices](../api/devices.md) alongside the
   port tables.
-- **File device.** Directory listings, chunked reads/writes and the
-  append/delete protocol all work through declared ports today, but
-  the vector-driven async pattern (request on one vector, consume on
-  another) wants a callback-door idiom documented before anyone
-  should rely on it. Genuine future work, not a gap in primitives.
-- **Mouse.** Declared and vectored, never read by any game. Usable
-  today via `Mouse.x/y DEI2`; no sugar proposed until a game needs it.
+ - **File device.** Landed on `dev`: `lib/file.ux` has split-phase
+  FileA macros (`file_read/write/stat/delete_req` initiate,
+  `FileA.success` answers inline on native, `file_poll` /
+  `file_on_event` complete portably for the web vector) over a
+  game-declared `device FileA 160` block (see [devices](../api/devices.md)).
+  Never request zero bytes (zero `success` reads as pending — stat
+  first); paths are CWD-relative. `lib/test_file.ux` gates a full
+  write/stat/read/poll/delete round-trip.
+ - **Mouse.** Landed on `dev`: `lib/mouse.ux` has `MOUSE_*` masks
+  (from the emulator's SDL mapping) and `mouse_poll` edge detection
+  mirroring `menu_poll`, over a corrected `device Mouse 144` block
+  (scroll at 9a/9c is one-shot with inverted Y — the old
+  `chord`/`scrolly_hb` block in games was never read). Position
+  stays a raw port read; live clicks need a display, so the gate
+  feeds synthetic states.
 - **System/expansion banks.** Fill/copy operations beyond 64K are
   unexposed. Out of scope until a program outgrows addressable
   memory; when it does, expose the three ops, not the raw ports.
@@ -283,6 +300,13 @@ through the existing address math (`;head_chr`, scaled index, `LDA`),
 and bare array idents should decay to their address (C-like) instead
 of emitting garbage. Small, coherent, and it removes a silent
 miscompile.
+(obsolete — implemented on `dev`: inline blobs register as
+`TypArray (TypU8, len)` (indexable, whole-copyable), file assets as
+`(TypU8, 0)` (indexed access only — length is assembly-time, so
+whole-copy is a loud error); bare blob values hit the array-value
+rules instead of miscompiling. Address decay done too: arrays flow
+into matching `&u8`/`&u16` parameters and initializers (the address
+moves; plain `u16` still rejected), so `strlen(sbuf)` just works.)
 
 ## 11. `assert` for self-checking harnesses (P1, pairs with 12)
 
@@ -291,6 +315,11 @@ statement would compile to: evaluate, skip on true, else
 `print("assert failed\n")` + `brk` — failing tests halt loudly with
 no outside tooling. Useless without locations, which is why it ships
 with the next item.
+(obsolete — implemented on `dev`: `assert E;` totals the condition,
+prints `assert failed at file:line:col` (location baked at parse)
+and `BRK`-halts; conditions mirror `if`; see
+[statements](statements.md). check.sh gates a passing harness plus
+the failing message via a location-aware gate.)
 
 ## 12. Source positions in errors (P1)
 
@@ -300,6 +329,16 @@ through parser (tokens become `token * pos`, failures report
 `line:col` plus the source line), and `assert` messages become file
 references instead of shrugs. Mechanical across `parser.ml`, large
 UX payoff, zero language change.
+(obsolete — implemented on `dev` with cheaper mechanics than
+sketched: positions ride a parallel array (no token/match changes),
+the parser prefixes every error via a shadowed `failwith`, the
+loader merges per-file name tables (dup errors cite both lines),
+and the checker/expander prefix via declaration context; `main`
+prints one `etal: error:` line plus the source line and exits 1.
+Follow-up landed too: identifier/literal/address leaves carry
+positions and the checker reports the last leaf visited, so most
+errors name exact lines (generated macro nodes fall back to
+context).)
 
 ## 13. Unused-definition warnings (P1)
 
@@ -309,6 +348,14 @@ every vector handler would false-positive) and warn at the end for
 never-used globals, locals, functions, labels and data. drifblim
 already warns on unused *tal* labels; this catches dead ETAL a whole
 pass earlier, with names attached.
+(obsolete — implemented on `dev` as name-mentioned-equals-used
+counting at the checker: warns unused globals, stored constants,
+locals, parameters, data and assets with positions, to stderr at
+exit 0. Skips functions (DCE prunes them by design), free `::`
+constants (zero bytes), labels (zero cost, drifblim covers),
+macros, buffers, devices, groups and structs; skips whole programs
+containing raw; shadowing conflates (sound, occasionally quiet).
+Gated by a location-aware `check_warn`.)
 
 ## 14. Hoist pure `for` bounds (P0)
 
@@ -355,11 +402,55 @@ if b & 16 != 0 { ... }   ( up held, regardless of other bits )
 Longer term this is evidence for `match` guards (proposal 3): plain
 equality dispatch preserves the gap, bitmask arms would close it.
 
+## 17. No calls into events (P0)
+
+A JSR into an `event` never comes back (vectors end in `BRK`), so
+each call rots the frame's stacks one entry — found headless as a
+two-byte-per-frame return-stack crawl. Reject at check time with the
+callee position; only `main` is exempt (the entry stub JSRs into it
+once and has nothing to return to). `AddrOf` vectors are unaffected.
+(obsolete — implemented on `dev`: `cannot call event` error, gated
+by a negative-compile `check_fail` on `test_event_call.ux`.)
+
+## 18. Discarded-result warnings + `_ =` (P1)
+
+A valued call as a bare statement drops the value — for getters like
+`scene_pop` that meant a lost update plus a leaked stack slot per
+call, found the same headless session as 17. Warn with the callee
+position (purely local, so raw programs warn too), and give the
+intentional case a spelling: `_ = expr;` evaluates then `POP`/`POP2`
+by width, and rejecting `void`/whole-value drops keeps it honest.
+(obsolete — implemented on `dev`: warning plus `Drop` through
+parse/check/DCE/expand/codegen, both gated by `check_warn` on
+`test_warn.ux`, with `test_scene.ux` converted to the idiom.)
+
+## 19. Comment-paren lint (P1)
+
+Nesting is documented (see [lexical](lexical.md)), but the trap shape
+— an inner paren group holding only whitespace, as in a `( ( )`
+glyph comment — silently eats the rest of the line instead of failing
+loud. Warn at lex time on exactly that shape; balanced remarks stay
+quiet. (obsolete — implemented on `dev`, gated by the trap comment
+in `test_warn.ux`.)
+
+## 20. Signed integers (P1)
+
+Two's complement `i8`/`i16` at the existing widths: `+ - *`, unary
+`-`/`~` and equality are bitwise-identical, ordered comparisons flip
+the sign bit, widening sign-extends in codegen. Strict lattice —
+same sign widens, same-width cross-sign reinterprets as unsigned for
+bitwise only, everything else errors naming the bridge (`& 255` for
+bits, `u8 mod 128` for values, fitting literals adapt). `/` and `%`
+on signed fail loudly (no unsigned-division miscompile); `for`
+bounds, indices and `mod` bases stay unsigned.
+(obsolete — implemented on `dev`: lattice plus sign-aware lowering
+through sem/codegen, gated by `test_signed.ux` with four
+`check_fail` lattice locks. Supersedes the old "signed arithmetic"
+rejection below — the hardware still has none, but the checker now
+carries the interpretation.)
+
 ## Deliberately not proposed
 
-- **Signed arithmetic.** The hardware has none; `Neg`-as-`0-x` plus
-  unsigned ops cover real games. Full signed emulation is library
-  territory if anyone ever needs it.
 - **Heap, GC, classes, exceptions.** No runtime exists to implement
   them with, and adding one would betray the "what you write is what
   runs" contract.
