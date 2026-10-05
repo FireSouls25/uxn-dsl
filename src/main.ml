@@ -160,32 +160,53 @@ let () =
     close_out oc;
     if !verbose then eprintf "Wrote Uxntal to %s\n" output_file
   | `Rom | `Bundle ->
-    (* Write temporary .tal file in same dir as input for relative includes *)
-    let input_dir = Filename.dirname input_file in
-    let temp_tal = Filename.temp_file ~temp_dir:input_dir "etal" ".tal" in
-    let oc = open_out_bin temp_tal in
-    output_string oc tal_code;
-    close_out oc;
-
-    let drifblim_path = Target_native.default_drifblim_path () in
+    (* Write temporary .tal file in same dir as input for relative includes.
+       Drifblim path buffers are $3f (63) bytes: a long absolute temp path
+       fails with a bare `Path invalid`. Assemble from inside input_dir with
+       short basenames; cwd is restored before bundling/copying. *)
+    let input_dir =
+      let d = Filename.dirname input_file in
+      if d = "" then "." else d in
+    let drifblim_path0 = Target_native.default_drifblim_path () in
     (* Assembly always executes under the HOST vm (a macOS/Windows
        binary cannot run on the Linux backend); --target only selects
        the packaged binary further below. *)
-    let asm_uxn2_path = Target_native.default_uxn2_path () in
+    let asm_uxn2_path0 = Target_native.default_uxn2_path () in
 
     if !verbose then begin
-      eprintf "Using drifblim: %s\n" drifblim_path;
-      eprintf "Using uxn2 for assembly: %s\n" asm_uxn2_path
+      eprintf "Using drifblim: %s\n" drifblim_path0;
+      eprintf "Using uxn2 for assembly: %s\n" asm_uxn2_path0
     end;
 
-    let temp_rom = Filename.temp_file ~temp_dir:input_dir "etal" ".rom" in
+    (* Absolutize the tool paths before chdir (a relative tool path
+       would break once we leave the original cwd). *)
+    let old_cwd = Sys.getcwd () in
+    let abs_of p =
+      if Filename.is_relative p then Filename.concat old_cwd p else p in
+    let drifblim_path = abs_of drifblim_path0 in
+    let asm_uxn2_path = abs_of asm_uxn2_path0 in
+    (try Sys.chdir input_dir
+     with Sys_error msg ->
+       failwith (Printf.sprintf "cannot chdir to input dir `%s`: %s" input_dir msg));
+    let temp_tal_base =
+      Filename.basename (Filename.temp_file ~temp_dir:"." "etal" ".tal") in
+    let oc = open_out_bin temp_tal_base in
+    output_string oc tal_code;
+    close_out oc;
+
+    let temp_rom_base =
+      Filename.basename (Filename.temp_file ~temp_dir:"." "etal" ".rom") in
     let cmd = sprintf "%s %s %s %s"
       (Filename.quote asm_uxn2_path) (Filename.quote drifblim_path)
-      (Filename.quote temp_tal) (Filename.quote temp_rom) in
-    if !verbose then eprintf "Running: %s\n" cmd;
+      (Filename.quote temp_tal_base) (Filename.quote temp_rom_base) in
+    if !verbose then eprintf "Running: %s (in %s)\n" cmd input_dir;
 
     let ret = Sys.command cmd in
-    Sys.remove temp_tal;
+    (try Sys.remove temp_tal_base with _ -> ());
+    (try Sys.chdir old_cwd with _ -> ());
+    (* From the restored cwd, input_dir/base resolves whether input_dir
+       was absolute, relative, or ".". *)
+    let temp_rom = Filename.concat input_dir temp_rom_base in
     if ret <> 0 then begin
       (try Sys.remove temp_rom with _ -> ());
       eprintf "Error: Assembly failed with code %d\n" ret;

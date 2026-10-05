@@ -54,9 +54,42 @@ let read_text path =
 (* NOTE: intentionally duplicates Loader.read_source instead of calling
    it, so etal_target stays independent of etal_loader. *)
 
+(* Bundle-time patch for the uxn5 per-vector step cap (vendor files stay
+   pristine — the replacement happens on the in-memory copy at emit time).
+   Root cause: vendor/uxn5/src/uxn.js eval caps at steps=0x80000 per vector,
+   while uxn2 runs unbounded for(;;) to BRK (uxn2.c eval). Chess ai_choose
+   needs ~2.5-2.8M steps, so the web core truncates mid make/unmake ->
+   flash/teleport as white, unplayable as black. Raised here to 0x800000
+   (~8.4M, ~3x headroom). Native targets untouched. *)
+let step_needle = "let steps = 0x80000"
+let step_patched =
+  "let steps = 0x800000 /* etal bundle: raise uxn5 per-vector cap from \
+   0x80000 (~512k) to 0x800000 (~8.4M); chess AI needs ~2.5-2.8M steps \
+   (ai_choose), native uxn2 is unbounded to BRK, so the stock cap truncates \
+   mid make/unmake. Vendor file stays pristine. */"
+
+(* Minimal single-occurrence replace (no Str dependency). *)
+let replace_once ~needle ~replacement s =
+  let nl = String.length needle in
+  let sl = String.length s in
+  let rec find i =
+    if i + nl > sl then None
+    else if String.sub s i nl = needle then Some i
+    else find (i + 1)
+  in
+  match find 0 with
+  | None -> s
+  | Some i ->
+    String.sub s 0 i ^ replacement ^ String.sub s (i + nl) (sl - i - nl)
+
+let patch_step_budget src =
+  replace_once ~needle:step_needle ~replacement:step_patched src
+
 let emit_html ~title ~game_name ~rom_bytes ~vendor_dir =
   let js = List.map (fun rel ->
-    try read_text (Filename.concat vendor_dir rel)
+    try
+      let src = read_text (Filename.concat vendor_dir rel) in
+      if rel = "src/uxn.js" then patch_step_budget src else src
     with Sys_error _ ->
       failwith (Printf.sprintf "web target: cannot read vendored uxn5 file `%s`" rel)
   ) uxn5_sources in
