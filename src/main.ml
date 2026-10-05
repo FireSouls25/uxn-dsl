@@ -2,7 +2,7 @@
 
 open Printf
 
-let usage = "Usage: etal [options] <input.ux>\n\nOptions:\n  -o <output>    Output file (default depends on mode)\n  -t             Output Uxntal source (.tal)\n  -r             Output assembled ROM (.rom)\n  --target <t>   Bundle target: native (host row, default), web (single .html),\n                 or an explicit VM row: linux-x86_64, linux-aarch64,\n                 macos-arm64, macos-x86_64, windows-x86_64 (zip).\n                 Assembly always runs under the host VM; --target only\n                 selects which vendored VM is packaged. One Linux backend\n                 can therefore serve every download option.\n  --list-targets List known --target rows and which VM rows are vendored\n  --zp-report   Print zero-page usage (total + per-function) to stderr\n  -v             Verbose output\n  -h             Show this help\n\nWith neither -t nor -r, etal outputs a single self-contained\nbundle: the vendored uxn vm plus the assembled ROM (native rows), or\na playable web page with the vendored uxn5 emulator (--target web).\nExtra unix-bundle arguments are passed to the vm\n(e.g. ./game -2 for 2x zoom); windows bundles run via run.bat.\n"
+let usage = "Usage: etal [options] <input.ux>\n\nOptions:\n  -o <output>    Output file (default depends on mode)\n  -t             Output Uxntal source (.tal)\n  -r             Output assembled ROM (.rom)\n  --target <t>   Bundle target: native (host row, default), web (single .html),\n                 or an explicit VM row: linux-x86_64, linux-aarch64,\n                 macos-arm64, macos-x86_64, windows-x86_64 (zip).\n                 Assembly always runs under the host VM; --target only\n                 selects which vendored VM is packaged. One Linux backend\n                 can therefore serve every download option.\n  --list-targets List known --target rows and which VM rows are vendored\n  --scale <s>    Window size: fit (default — as large as the display allows),\n                 1, 2 or 3 for a fixed whole-number scale, or full for the\n                 whole viewport. Native rows pass what uxn2 accepts (-2,\n                 -f); a web bundle starts in this mode and the page has\n                 its own controls to change it without a rebuild.\n  --fullscreen   Start fullscreen (native: passes -f to the vm)\n  --zp-report   Print zero-page usage (total + per-function) to stderr\n  -v             Verbose output\n  -h             Show this help\n\nWith neither -t nor -r, etal outputs a single self-contained\nbundle: the vendored uxn vm plus the assembled ROM (native rows), or\na playable web page with the vendored uxn5 emulator (--target web).\nExtra unix-bundle arguments are passed to the vm\n(e.g. ./game -2 for 2x zoom); windows bundles run via run.bat.\n"
 
 (* Proposal 12: turn a `file:line:col: ...` failure into a backend-
    friendly diagnostic plus the offending source line. A Windows
@@ -34,6 +34,19 @@ let echo_source_line msg =
        close_in_noerr ic
      with _ -> ())
 
+(* Window size preference, validated once so every backend gets the
+   same closed set. `fit` is the default: as large as the display
+   allows. Top-level rather than a `let` inside the sequence below, so
+   the multi-branch match stays readable. *)
+let window_of scale fullscreen =
+  match scale with
+  | None -> { Target.default_window with fullscreen = fullscreen }
+  | Some s when s = "fit" || s = "1" || s = "2" || s = "3" || s = "full" ->
+    { scale = s; fullscreen = fullscreen }
+  | Some s ->
+    eprintf "Error: bad --scale `%s` (want fit, 1, 2, 3 or full)\n" s;
+    exit 1
+
 let () =
   let input_file = ref None in
   let output_file = ref None in
@@ -41,6 +54,8 @@ let () =
   let emit_rom = ref false in
   let target = ref "native" in
   let list_targets = ref false in
+  let scale = ref None in
+  let fullscreen = ref false in
   let verbose = ref false in
 
   let speclist = [
@@ -49,11 +64,15 @@ let () =
     ("-r", Arg.Unit (fun () -> emit_rom := true), "Output ROM only");
     ("--target", Arg.String (fun s -> target := s), "Bundle target: native (default), web, or explicit VM row");
     ("--list-targets", Arg.Unit (fun () -> list_targets := true), "List known --target rows and vendored VM status");
+    ("--scale", Arg.String (fun s -> scale := Some s), "Window size: fit (default), 1, 2, 3 or full");
+    ("--fullscreen", Arg.Unit (fun () -> fullscreen := true), "Start fullscreen");
     ("--zp-report", Arg.Unit (fun () -> Codegen.zp_report := true), "Print zero-page usage to stderr");
     ("-v", Arg.Unit (fun () -> verbose := true), "Verbose output");
   ] in
 
   Arg.parse speclist (fun s -> input_file := Some s) usage;
+
+  let window = window_of !scale !fullscreen in
 
   (* Backend discovery: no input needed, exit 0 after listing. The
      `vendored` column tells a FastAPI backend which download options
@@ -221,19 +240,23 @@ let () =
     | `Bundle ->
       (match target with
       | `Native ->
-        Target_native.bundle ~verbose:!verbose
+        Target_native.bundle ~verbose:!verbose ~window
           ~uxn2_path:(Target_native.default_uxn2_path ())
           ~rom_path:temp_rom ~output_file;
         Sys.remove temp_rom;
         if !verbose then eprintf "Wrote executable bundle to %s\n" output_file
       | `Native_row row ->
-        Target_native.bundle_for_row ~verbose:!verbose
+        Target_native.bundle_for_row ~verbose:!verbose ~window
           ~row ~rom_path:temp_rom ~output_file;
         Sys.remove temp_rom;
         if !verbose then eprintf "Wrote %s bundle to %s\n" row output_file
       | `Web ->
+        (* The page has its own size controls; the flag only picks the
+           mode it starts in. `full` starts full-window rather than
+           letterboxed. *)
         Target_web.bundle ~verbose:!verbose
           ~vendor_dir:(Target_web.default_uxn5_dir ())
+          ~view:(if window.fullscreen && window.scale = "fit" then "full" else window.scale)
           ~rom_path:temp_rom ~output_file;
         Sys.remove temp_rom)
     | `Tal -> assert false));

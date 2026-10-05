@@ -31,6 +31,8 @@ etal [options] <input.ux>
                 or explicit VM row (linux-x86_64, linux-aarch64,
                 macos-arm64, macos-x86_64, windows-x86_64)
   --list-targets list known rows + vendored status (backend discovery)
+  --scale s     window size: fit (default), 1, 2, 3 or full
+  --fullscreen  start fullscreen
   -v            verbose (declaration counts, chosen tools, output sizes)
 ```
 
@@ -53,6 +55,87 @@ temp `.tal` next to the input and cleans up after itself; assembly
 failures report the assembler's exit code. Unix bundles forward
 extra arguments to the VM (`./game -2` boots at 2x zoom); the temp
 extraction dir is removed on exit, interrupt, or termination.
+
+## Window size
+
+`--scale` picks how big the bundle's window is, and `--fullscreen`
+adds fullscreen on top. It is about the window around the ROM's
+screen, never the ROM's own `Screen.width`/`Screen.height`.
+
+| Value | Web page | Native (uxn2) |
+|---|---|---|
+| `fit` (default) | opens at the largest whole-number scale that fits the viewport, re-fitting when the window or the ROM's screen size changes | no flag: the window manager sizes it, and uxn2's own zoom key still cycles 1-3x |
+| `1` / `2` / `3` | opens at that fixed scale, and ignores later resizes (the choice is yours to make, so it is not taken back) | `2` passes `-2`; `3` passes `-2` because uxn2's CLI has no `-3` -- its in-app key reaches 3x from 2x |
+| `full` | the canvas takes the whole viewport | -- |
+| `--fullscreen` | same as `full` unless `--scale` says otherwise | passes `-f` |
+
+Two deliberate limits. **Whole numbers only**: a fractional scale
+gives a pixel-art tile a different number of device pixels on
+alternating rows, which is what `image-rendering: pixelated` exists
+to prevent. **Width is the target, height is the constraint**: the
+scale is the largest integer that fits both axes, so a tall game is
+never pushed off the bottom of the screen.
+
+uxn2's CLI is genuinely tiny (`usage: uxn2 -v | [-f -2] file.rom`),
+so the native mapping is a translation, not a pass-through: 1x is the
+default, `-2` is 2x, and there is no `-1`. Anything else (`fit`,
+`full`, `1`, `3`) means "no flag".
+
+The web page gets its own size buttons in the meta bar -- Fit, 1x, 2x,
+3x, Fullscreen -- and remembers the choice in `localStorage`, so
+changing the window size never needs a rebuild. The vendored Zoom
+button and the ctrl+B / alt+S / shift+Start / home shortcut still work
+and go through the same controller.
+
+## Audio in web bundles
+
+Upstream uxn5 has **no Audio device**: `vendor/uxn5/src/devices/` is
+console, controller, datetime, mouse, screen, system, and `emu.js`
+routes only port pages `0x00`, `0x10`, `0x20` and `0xc0`. A web
+bundle therefore never heard anything -- a write to `Audio0.pitch`
+landed in raw device memory and stopped there. `web/audio.js` adds
+the missing device, wired in from the boot script so `vendor/` stays
+byte-identical to the pinned upstream checkout.
+
+It is a faithful port of uxn2's renderer (`uxn2/src/uxn2.c`, the
+"Audio" section), so a ROM sounds the same on both VMs: the same
+`advances` table, the same `NOTE_PERIOD`/`ADSR_STEP` math, the same
+envelope, the same single-cycle vs sample-repeat period choice, and
+the same "high nibble is the left channel" volume convention. Two
+adaptations, both forced by the host:
+
+* samples are rendered up front into an `AudioBuffer` rather than on
+  demand, so a note needs a length cap (8s);
+* uxn2 accumulates into `Sint16` while Web Audio wants floats in
+  [-1, 1], so the output is scaled by the `Sint16` full scale --
+  without that every note clips flat.
+
+The port map is uxn2's (`&dev[0x30]`...`&dev[0x60]`, DEO on `pitch`,
+DEI on `position` and `output`). The `nxu` audio *proposals* in the
+corpus move `volume` and add a `mode` port; they are not what the
+vendored VM implements, so they are not what this implements.
+
+Browsers refuse to start audio without a gesture, so the context is
+created lazily and resumed on the first pointer or key event. A page
+nobody touches is silent; a page somebody plays makes noise.
+
+## Support files
+
+`web/` ships next to the binary and is found by the same exe-relative
+walk-up as `vendor/`, so a release tarball needs no extra plumbing.
+
+```
+web/
+  audio.js    # the Audio device uxn5 lacks
+  view.js     # window sizing: fit / 1x / 2x / 3x / full
+```
+
+Two bundle-time patches are applied to the in-memory copy of
+`vendor/uxn5/src/uxn.js`, leaving the vendored file pristine: the
+per-vector step cap (`0x80000` -> `0x800000`, so chess's AI is not
+truncated mid make/unmake) and `const ram` -> `const ram = this.mem`,
+because the Audio device has to read the ROM to resample a note and
+`ram` is otherwise a closure local with no accessor.
 
 ## Vendor layout
 

@@ -112,9 +112,37 @@ let default_drifblim_path () =
   in
   find candidates
 
+(* uxn2's own command line is deliberately tiny: `-f` for fullscreen and
+   `-2` for 2x. It has no -1 and no -3 (its in-app key cycles 1..3, but
+   the CLI does not). So a whole-number scale maps like this:
+ *
+ *   1  -> no flag (1x is the default)
+ *   2  -> -2
+ *   3  -> -2, and the in-app key reaches 3x from there
+ *
+ * Anything else is passed through untouched, which is what `fit`
+ * means here: no flag, let the window manager decide. *)
+let vm_args (w : Target.window) =
+  let args = ref [] in
+  if w.fullscreen then args := "-f" :: !args;
+  (match w.scale with
+   | "2" -> args := "-2" :: !args
+   | "3" -> args := "-2" :: !args
+   | _ -> ());
+  List.rev !args
+
 (* Self-extracting bundle stub. OFFSET is the byte length of the stub
-   itself (including the marker line); the tar.gz payload follows. *)
-let bundle_stub ~prog_name ~offset =
+   itself (including the marker line); the tar.gz payload follows.
+   vm_args render bare: Filename.quote would write `-f` as `'-f'`,
+   which the shell strips anyway but which reads like a mistake in a
+   file people open and edit. Only the caller's own "$@" needs
+   quoting, and that is already quoted in the stub. *)
+let bundle_stub ~prog_name ~offset ~vm_args =
+  let flags =
+    match vm_args with
+    | [] -> ""
+    | args -> " " ^ String.concat " " args
+  in
   sprintf {|#!/bin/sh
 # ETAL bundle: %s - vendored uxn vm + rom. Executes the rom in the vm.
 # Extra arguments are passed to the vm before the rom (e.g. ./%s -2).
@@ -134,13 +162,13 @@ if ! "$TMPD/uxn2" -v >/dev/null 2>&1; then
   exit 1
 fi
 # Run as a child (not exec) so the EXIT trap cleans up $TMPD.
-"$TMPD/uxn2" "$@" "$TMPD/game.rom"
+"$TMPD/uxn2"%s "$@" "$TMPD/game.rom"
 rc=$?
 exit $rc
 __ETAL_PAYLOAD__
-|} prog_name prog_name offset
+|} prog_name prog_name offset flags
 
-let bundle ~verbose ~uxn2_path ~rom_path ~output_file =
+let bundle ~verbose ~uxn2_path ~rom_path ~output_file ~window =
   let prog_name = Filename.basename output_file in
   (* Stage payload files under fixed names. *)
   let stage = Filename.temp_file "etal-stage" "" in
@@ -162,7 +190,7 @@ let bundle ~verbose ~uxn2_path ~rom_path ~output_file =
     let payload_bytes = Target.read_file_bin payload in
     (* Stub length depends on the offset digits; iterate once to fixpoint. *)
     let rec fix_stub guess =
-      let stub = bundle_stub ~prog_name ~offset:guess in
+      let stub = bundle_stub ~prog_name ~offset:guess ~vm_args:(vm_args window) in
       let actual = String.length stub in
       if actual = guess then stub else fix_stub actual
     in
@@ -186,7 +214,7 @@ let bundle ~verbose ~uxn2_path ~rom_path ~output_file =
    and run.bat (`uxn2.exe game.rom %*`). Windows finds DLLs next to
    the executable, so co-shipping the DLL removes the install step
    (see vendor/BUILD.md). Requires `zip` at bundle time. *)
-let bundle_windows_zip ~verbose ~row ~uxn2_path ~rom_path ~output_file =
+let bundle_windows_zip ~verbose ~row ~uxn2_path ~rom_path ~output_file ~window =
   let stage = Filename.temp_file "etal-stage" "" in
   Sys.remove stage;
   let rc_mkdir = Sys.command (sprintf "mkdir -p %s" (Filename.quote stage)) in
@@ -203,8 +231,13 @@ let bundle_windows_zip ~verbose ~row ~uxn2_path ~rom_path ~output_file =
       end)
       [ "SDL2.dll"; "SDL2d.dll" ];
     let bat = Filename.concat stage "run.bat" in
+    (* uxn2.exe takes the same tiny flag set as the unix VM, and its
+       getopt accepts `-f`/`-2` just as uxn2 does, so the vm_args list
+       is reused verbatim ahead of the caller's own %*. *)
+    let flags = String.concat " " (vm_args window) in
     let oc = open_out_bin bat in
-    output_string oc "@echo off\r\n\"%~dp0uxn2.exe\" \"%~dp0game.rom\" %*\r\n";
+    output_string oc
+      (Printf.sprintf "@echo off\r\n\"%%~dp0uxn2.exe\" %s \"%%~dp0game.rom\" %%*\r\n" flags);
     close_out oc;
     List.iter (fun f ->
       ignore (Sys.command (sprintf "touch -t 200001010000 %s"
@@ -223,13 +256,13 @@ let bundle_windows_zip ~verbose ~row ~uxn2_path ~rom_path ~output_file =
 
 (* Bundle for an explicit row. Unix rows reuse the sh+tar.gz carrier
    with that row's VM; the Windows row uses the zip carrier. *)
-let bundle_for_row ~verbose ~row ~rom_path ~output_file =
+let bundle_for_row ~verbose ~row ~rom_path ~output_file ~window =
   if not (List.mem row known_rows) then
     failwith (Printf.sprintf "unknown native row `%s` (want one of: %s)"
       row (String.concat ", " known_rows));
   let uxn2_path = uxn2_path_for_row row in
   if verbose then eprintf "Using uxn2 row %s: %s\n" row uxn2_path;
   if is_windows_row row then
-    bundle_windows_zip ~verbose ~row ~uxn2_path ~rom_path ~output_file
+    bundle_windows_zip ~verbose ~row ~uxn2_path ~rom_path ~output_file ~window
   else
-    bundle ~verbose ~uxn2_path ~rom_path ~output_file
+    bundle ~verbose ~uxn2_path ~rom_path ~output_file ~window
