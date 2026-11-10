@@ -57,6 +57,10 @@ jobs:
             os: ubuntu-latest
             ocaml: "5.5.0"
             nosandbox: true
+          - name: linux-arm
+            os: ubuntu-24.04-arm
+            ocaml: "5.5.0"
+            nosandbox: true
           - name: macos
             os: macos-latest
             ocaml: "5.5.0"
@@ -132,11 +136,15 @@ jobs:
     # pinned below), same release intent as vendor/linux-x86_64
     # (-DNDEBUG -O2, stripped, SDL2 dynamic). See vendor/BUILD.md.
     name: build-vm uxn2 (${{ matrix.row }})
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    # Every push to main and every tag (not PRs): a broken VM build
+    # shows up right away instead of at release time.
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
         include:
+          - row: linux-aarch64
+            os: ubuntu-24.04-arm
           - row: macos-arm64
             os: macos-latest
           - row: macos-x86_64
@@ -152,6 +160,19 @@ jobs:
         run: |
           git clone --quiet "$UXN2_REPO" uxn2src
           git -C uxn2src checkout --quiet "$UXN2_COMMIT"
+
+      - name: Build uxn2 (Linux arm64, distro SDL2)
+        # For ARM Linux servers (the backend on Graviton assembles with
+        # the host row) and ARM players. Built on Ubuntu 24.04, so it
+        # needs glibc 2.39+ (the x86_64 row keeps its 2.17 floor).
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q libsdl2-dev
+          mkdir -p out
+          cc $(sdl2-config --cflags) -DNDEBUG -O2 -g0 uxn2src/src/uxn2.c -o out/uxn2 $(sdl2-config --libs)
+          strip out/uxn2
+          file out/uxn2
+          ./out/uxn2 -v
 
       - name: Build uxn2 (macOS, Homebrew SDL2)
         # Links Homebrew's libSDL2 (/opt/homebrew on Apple silicon,
@@ -200,8 +221,8 @@ jobs:
     # Compiler-only releases (no games): each artifact is the etal
     # binary plus the vendor/ tree (VMs, assembler, web emulator), so
     # -r/bundle/web work out of the box wherever that OS's VM row
-    # exists (linux-x86_64 and macos-arm64 today; macos-x86_64 and
-    # Windows light up when their VM binaries land in vendor/).
+    # exists (linux-x86_64 and macos-arm64 are committed; linux-aarch64,
+    # macos-x86_64 and Windows come from build-vm).
     # No toolchain here: the binary comes from the build-test job's artifact
     # (same bytes CI validated), so release needs no OCaml/opam/dune.
     name: package-release etal (${{ matrix.asset }})
@@ -216,6 +237,9 @@ jobs:
           - name: linux
             os: ubuntu-latest
             asset: etal-linux-x86_64.tar.gz
+          - name: linux-arm
+            os: ubuntu-24.04-arm
+            asset: etal-linux-aarch64.tar.gz
           - name: macos
             os: macos-latest
             asset: etal-macos-arm64.tar.gz
