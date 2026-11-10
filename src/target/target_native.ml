@@ -116,18 +116,20 @@ let default_drifblim_path () =
    `-2` for 2x. It has no -1 and no -3 (its in-app key cycles 1..3, but
    the CLI does not). So a whole-number scale maps like this:
  *
- *   1  -> no flag (1x is the default)
- *   2  -> -2
- *   3  -> -2, and the in-app key reaches 3x from there
+ *   1    -> no flag (1x)
+ *   2    -> -2
+ *   3    -> -2, and the in-app key reaches 3x from there
+ *   fit  -> -2: the default, "as large as the display allows". uxn2
+ *           cannot measure the display from its CLI, and a 1x window
+ *           of a 256x192 game is tiny on any modern screen, while 2x
+ *           of even 320x240 fits every display.
  *
- * Anything else is passed through untouched, which is what `fit`
- * means here: no flag, let the window manager decide. *)
+ * `full` passes no scale flag (fullscreen is its own -f). *)
 let vm_args (w : Target.window) =
   let args = ref [] in
   if w.fullscreen then args := "-f" :: !args;
   (match w.scale with
-   | "2" -> args := "-2" :: !args
-   | "3" -> args := "-2" :: !args
+   | "2" | "3" | "fit" -> args := "-2" :: !args
    | _ -> ());
   List.rev !args
 
@@ -215,6 +217,12 @@ let bundle ~verbose ~uxn2_path ~rom_path ~output_file ~window =
    the executable, so co-shipping the DLL removes the install step
    (see vendor/BUILD.md). Requires `zip` at bundle time. *)
 let bundle_windows_zip ~verbose ~row ~uxn2_path ~rom_path ~output_file ~window =
+  (* zip runs inside the staging dir, so a relative -o (the backend
+     passes `-o game.zip`) must be resolved first or the zip lands in
+     the stage and is deleted with it. *)
+  let output_file =
+    if Filename.is_relative output_file then Filename.concat (Sys.getcwd ()) output_file
+    else output_file in
   let stage = Filename.temp_file "etal-stage" "" in
   Sys.remove stage;
   let rc_mkdir = Sys.command (sprintf "mkdir -p %s" (Filename.quote stage)) in
@@ -242,7 +250,8 @@ let bundle_windows_zip ~verbose ~row ~uxn2_path ~rom_path ~output_file ~window =
     List.iter (fun f ->
       ignore (Sys.command (sprintf "touch -t 200001010000 %s"
         (Filename.quote (Filename.concat stage f)))))
-      [ "uxn2.exe"; "game.rom"; "run.bat" ];
+      ([ "uxn2.exe"; "game.rom"; "run.bat" ]
+       @ List.filter (fun f -> Sys.file_exists (Filename.concat stage f)) [ "SDL2.dll"; "SDL2d.dll" ]);
     let rc_zip = Sys.command (sprintf "cd %s && zip -j -X %s uxn2.exe game.rom run.bat %s >/dev/null"
       (Filename.quote stage) (Filename.quote output_file)
       (String.concat " " (List.filter (fun dll ->
