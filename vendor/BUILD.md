@@ -169,22 +169,32 @@ Darwin/arm64 (`host_row` in `src/target/target_native.ml`).
 
 ## windows-x86_64 (done 2026-11-10, verified under wine 11.21)
 
-`vendor/windows-x86_64/uxn2.exe` + `SDL2.dll`, cross-built on Linux
-by `scripts/build-uxn2-windows.sh` (zig 0.17 `zig cc -target
-x86_64-windows-gnu`, uxn2 at the CI pin, SDL2 2.32.10 MinGW devel
-package). Upstream uxn2.c needs one shim on MinGW, force-included
-from `scripts/uxn2-win-compat.h`: POSIX `mkdir(path, mode)` becomes
-`_mkdir(path)`. CI's MSYS2 gcc row uses the same header.
+`vendor/windows-x86_64/uxn2.exe`: one file, nothing beside it.
+Cross-built on Linux by `scripts/build-uxn2-windows.sh` (zig 0.17
+`zig cc -target x86_64-windows-gnu`, uxn2 at the CI pin, SDL2 2.32.10
+MinGW devel package, linked **statically**). CI's MSYS2 row builds
+the same thing with gcc.
 
-- `file`: PE32+ executable (GUI) x86-64: no console window behind the
-  game (`--subsystem windows` / `-mwindows`).
-- Imports: `SDL2.dll` (co-shipped beside the exe), KERNEL32, SHELL32
-  and the Universal CRT (`api-ms-win-crt-*`, built into Windows 10+;
-  Windows 7/8 need the UCRT update).
-- Verified under wine: `-v`; a ROM printing to the console and
-  writing `sub/out.txt` through the File device (creates the
-  folder); the chess example from an `etal --target windows-x86_64`
-  zip via `run.bat`, played by hand.
+- Upstream uxn2.c is compiled unchanged with two defines:
+  `-include scripts/uxn2-win-compat.h` (POSIX `mkdir(path, mode)` →
+  MinGW `_mkdir(path)`) and `-DSDL_MAIN_HANDLED -Dmain=uxn2_main`.
+  `scripts/uxn2-embed.c` owns the entry point: if the exe ends in an
+  `ETALROM1` footer it runs the ROM stored before it (written to a
+  temp file, removed on exit), else it is plain uxn2 (which is how a
+  Windows-host etal assembles).
+- `etal --target windows-x86_64` writes `[uxn2.exe][rom][footer]` as
+  the game `.exe` (format in `bundle_windows_exe`,
+  src/target/target_native.ml); the 2× window / fullscreen choice is
+  a footer flag.
+- `file`: PE32+ (GUI) x86-64, about 1.8 MB. Imports: Windows system
+  DLLs only (KERNEL32, USER32, GDI32, SHELL32, WINMM, SETUPAPI,
+  OLE32, OLEAUT32, IMM32, VERSION, ADVAPI32) and the Universal CRT
+  (`api-ms-win-crt-*`, built into Windows 10+).
+- Verified under wine: `-v`; plain mode with a ROM that prints and
+  writes `sub/out.txt` through the File device (creates the folder);
+  the same ROM embedded (temp file cleaned up after); the chess
+  example as a single etal-built `.exe`. A killed process leaves its
+  temp ROM (tens of KB) in `%TEMP%`.
 
 ## uxn5 pin (web)
 

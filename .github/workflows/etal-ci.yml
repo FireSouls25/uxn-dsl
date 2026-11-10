@@ -214,22 +214,27 @@ jobs:
           msystem: MINGW64
           install: mingw-w64-x86_64-gcc mingw-w64-x86_64-SDL2
 
-      - name: Build uxn2.exe (Windows, MinGW + SDL2.dll beside it)
-        # The zip carrier co-ships SDL2.dll from the row dir, so
-        # players need nothing installed (Windows loads DLLs next to
-        # the exe).
+      - name: Build uxn2.exe (Windows, MinGW, static SDL2, embeddable)
+        # One file with nothing beside it: SDL2 and the MinGW runtime
+        # are linked statically, and scripts/uxn2-embed.c wraps uxn2's
+        # main so etal can append a ROM and ship a single game .exe
+        # (same build as scripts/build-uxn2-windows.sh, which uses zig).
+        # The compat header maps uxn2's POSIX mkdir(path, mode) to
+        # MinGW's _mkdir. -mwindows: no console window behind the game.
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
-          # The compat header maps uxn2's POSIX mkdir(path, mode) to
-          # MinGW's _mkdir (same as scripts/build-uxn2-windows.sh).
-          # -mwindows: GUI subsystem, no console window behind the game.
           mkdir -p out
-          gcc $(sdl2-config --cflags) -DNDEBUG -O2 -g0 -s -include scripts/uxn2-win-compat.h \
-            uxn2src/src/uxn2.c -o out/uxn2.exe $(sdl2-config --libs) -mwindows
-          cp /mingw64/bin/SDL2.dll out/
+          CF="$(sdl2-config --cflags) -DNDEBUG -O2 -g0"
+          gcc $CF -include scripts/uxn2-win-compat.h -DSDL_MAIN_HANDLED -Dmain=uxn2_main -c uxn2src/src/uxn2.c -o uxn2.o
+          gcc $CF -c scripts/uxn2-embed.c -o embed.o
+          gcc -s -static embed.o uxn2.o -o out/uxn2.exe $(sdl2-config --static-libs) -mwindows
           file out/uxn2.exe
-          ldd out/uxn2.exe | grep -iv '/c/windows' || true
+          # Portability gate: Windows system DLLs only.
+          objdump -p out/uxn2.exe | grep "DLL Name"
+          if objdump -p out/uxn2.exe | grep "DLL Name" | grep -viE "(kernel32|user32|gdi32|shell32|winmm|setupapi|oleaut32|ole32|imm32|version|advapi32|msvcrt|cfgmgr32|api-ms-win-.*)\.dll"; then
+            echo "uxn2.exe needs a non-system DLL (see above)" >&2; exit 1
+          fi
 
       - name: Upload VM
         uses: actions/upload-artifact@v5

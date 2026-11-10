@@ -1,5 +1,5 @@
 (* Native bundle backends: unix rows use a sh stub + tar.gz payload,
- * the Windows row uses a plain zip (uxn2.exe + game.rom + run.bat).
+ * the Windows row is one .exe (the VM with the ROM appended).
  *
  * Output is a self-contained executable: the vendored uxn vm plus the
  * assembled ROM. Running it launches the ROM in the vm. Extra
@@ -211,57 +211,36 @@ let bundle ~verbose ~uxn2_path ~rom_path ~output_file ~window =
   let rc_chmod = Sys.command (sprintf "chmod +x %s" (Filename.quote output_file)) in
   if rc_chmod <> 0 then (eprintf "Error: chmod +x failed\n"; exit 1)
 
-(* Windows carrier: plain zip (no sh stub — cmd.exe cannot run it).
-   Contains uxn2.exe (+ SDL2.dll when vendored beside it), game.rom
-   and run.bat (`uxn2.exe game.rom %*`). Windows finds DLLs next to
-   the executable, so co-shipping the DLL removes the install step
-   (see vendor/BUILD.md). Requires `zip` at bundle time. *)
-let bundle_windows_zip ~verbose ~row ~uxn2_path ~rom_path ~output_file ~window =
-  (* zip runs inside the staging dir, so a relative -o (the backend
-     passes `-o game.zip`) must be resolved first or the zip lands in
-     the stage and is deleted with it. *)
-  let output_file =
-    if Filename.is_relative output_file then Filename.concat (Sys.getcwd ()) output_file
-    else output_file in
-  let stage = Filename.temp_file "etal-stage" "" in
-  Sys.remove stage;
-  let rc_mkdir = Sys.command (sprintf "mkdir -p %s" (Filename.quote stage)) in
-  if rc_mkdir <> 0 then (eprintf "Error: cannot create staging dir\n"; exit 1);
-  (try
-    Target.copy_file uxn2_path (Filename.concat stage "uxn2.exe");
-    Target.copy_file rom_path (Filename.concat stage "game.rom");
-    (* Co-ship the SDL2 DLL when the row vendors one. *)
-    List.iter (fun dll ->
-      let src = Filename.concat (Filename.dirname uxn2_path) dll in
-      if Sys.file_exists src then begin
-        Target.copy_file src (Filename.concat stage dll);
-        if verbose then eprintf "Co-shipping %s\n" dll
-      end)
-      [ "SDL2.dll"; "SDL2d.dll" ];
-    let bat = Filename.concat stage "run.bat" in
-    (* uxn2.exe takes the same tiny flag set as the unix VM, and its
-       getopt accepts `-f`/`-2` just as uxn2 does, so the vm_args list
-       is reused verbatim ahead of the caller's own %*. *)
-    let flags = String.concat " " (vm_args window) in
-    let oc = open_out_bin bat in
-    output_string oc
-      (Printf.sprintf "@echo off\r\n\"%%~dp0uxn2.exe\" %s \"%%~dp0game.rom\" %%*\r\n" flags);
-    close_out oc;
-    List.iter (fun f ->
-      ignore (Sys.command (sprintf "touch -t 200001010000 %s"
-        (Filename.quote (Filename.concat stage f)))))
-      ([ "uxn2.exe"; "game.rom"; "run.bat" ]
-       @ List.filter (fun f -> Sys.file_exists (Filename.concat stage f)) [ "SDL2.dll"; "SDL2d.dll" ]);
-    let rc_zip = Sys.command (sprintf "cd %s && zip -j -X %s uxn2.exe game.rom run.bat %s >/dev/null"
-      (Filename.quote stage) (Filename.quote output_file)
-      (String.concat " " (List.filter (fun dll ->
-        Sys.file_exists (Filename.concat stage dll)) [ "SDL2.dll"; "SDL2d.dll" ]))) in
-    if rc_zip <> 0 then (eprintf "Error: zip failed (is zip installed?)\n"; exit 1);
-    if verbose then eprintf "Wrote windows bundle for row %s to %s\n" row output_file
-  with e ->
-    ignore (Sys.command (sprintf "rm -rf %s" (Filename.quote stage)));
-    raise e);
-  ignore (Sys.command (sprintf "rm -rf %s" (Filename.quote stage)))
+(* Windows carrier: one .exe. The vendored uxn2.exe is uxn2 built with
+   scripts/uxn2-embed.c and a static SDL2 (scripts/build-uxn2-windows.sh),
+   so it needs no DLL beside it and, when its own file ends in a
+   footer, runs the ROM stored just before that footer:
+
+     [uxn2.exe][game.rom]["ETALROM1"][u32 LE rom length][flags][0 0 0]
+
+   flags: 1 = fullscreen, 2 = 2x window (the same choice vm_args makes
+   for the unix rows). Windows ignores bytes after the PE image, so
+   the result is an ordinary executable. *)
+let bundle_windows_exe ~verbose ~row ~uxn2_path ~rom_path ~output_file ~window =
+  let vm = Target.read_file_bin uxn2_path in
+  let rom = Target.read_file_bin rom_path in
+  let len = String.length rom in
+  if len = 0 || len > 0x10000 then (eprintf "Error: ROM size %d does not fit the windows carrier\n" len; exit 1);
+  let args = vm_args window in
+  let flags = (if List.mem "-f" args then 1 else 0) lor (if List.mem "-2" args then 2 else 0) in
+  let footer = Bytes.make 16 '\000' in
+  Bytes.blit_string "ETALROM1" 0 footer 0 8;
+  Bytes.set footer 8 (Char.chr (len land 0xff));
+  Bytes.set footer 9 (Char.chr ((len lsr 8) land 0xff));
+  Bytes.set footer 10 (Char.chr ((len lsr 16) land 0xff));
+  Bytes.set footer 11 (Char.chr ((len lsr 24) land 0xff));
+  Bytes.set footer 12 (Char.chr flags);
+  let oc = open_out_bin output_file in
+  output_string oc vm;
+  output_string oc rom;
+  output_bytes oc footer;
+  close_out oc;
+  if verbose then eprintf "Wrote windows exe for row %s to %s (%d + %d bytes)\n" row output_file (String.length vm) len
 
 (* Bundle for an explicit row. Unix rows reuse the sh+tar.gz carrier
    with that row's VM; the Windows row uses the zip carrier. *)
@@ -272,6 +251,6 @@ let bundle_for_row ~verbose ~row ~rom_path ~output_file ~window =
   let uxn2_path = uxn2_path_for_row row in
   if verbose then eprintf "Using uxn2 row %s: %s\n" row uxn2_path;
   if is_windows_row row then
-    bundle_windows_zip ~verbose ~row ~uxn2_path ~rom_path ~output_file ~window
+    bundle_windows_exe ~verbose ~row ~uxn2_path ~rom_path ~output_file ~window
   else
     bundle ~verbose ~uxn2_path ~rom_path ~output_file ~window
