@@ -4,7 +4,11 @@
  * license notice is stamped into every emitted page) plus the game ROM
  * as base64. ROM bytes load through the stock Emu.load path after
  * device init (microtask ordering: our loader queues behind init's
- * own .then). Vanilla JS core only (no wasm payload to fetch). *)
+ * own .then). The page carries both cores: the vendored Uxn.wasm core
+ * (wasm inlined as base64, nothing to fetch) runs the game, and Emu
+ * falls back to the vanilla JS core only where WebAssembly is missing.
+ * The JS core interprets each opcode through closures and runs games
+ * several times slower than native; wasm closes most of that gap. *)
 
 let uxn5_notice = "uxn5 (c) 2020 Devine Lu Linvega - ISC, vendored from \
   https://git.sr.ht/~rabbits/uxn5 - Permission to use, copy, modify, and \
@@ -22,6 +26,8 @@ let uxn5_sources = [
   "src/devices/datetime.js";
   "src/devices/mouse.js";
   "src/devices/screen.js";
+  (* Defines UxnWASM, which Emu prefers when present. *)
+  "src/uxn-wasm.js";
   "src/emu.js";
 ]
 
@@ -167,6 +173,8 @@ let emit_html ~title ~game_name ~rom_bytes ~vendor_dir ~support_dir ~view =
   w "<!-- ";
   w uxn5_notice;
   w " -->\n";
+  w "<!-- Uxn.wasm (c) Remko Tronçon - MIT, https://github.com/remko/uxn.wasm \
+     (bundled with uxn5 as src/uxn-wasm.js) -->\n";
   List.iter (fun src ->
     w "<script>\n";
     w src;
@@ -207,12 +215,25 @@ let emit_html ~title ~game_name ~rom_bytes ~vendor_dir ~support_dir ~view =
   (* A context created at load stays suspended until a gesture. *)
   w "['pointerdown','keydown','touchstart'].forEach(e =>\n";
   w "  window.addEventListener(e, () => emulator.audio.unlock(), {once:false}));\n";
-  w "emulator.init();\n";
-  w "Promise.resolve().then(() => {\n";
+  (* Load the ROM once the core is ready AND Emu.init has started the
+     devices. The wasm core resolves init only after instantiating, so
+     a bare microtask would run before it. Hooking the core's init
+     puts our reaction first on the promise Emu chains on; queueing
+     one more microtask from it lands right after Emu's own .then. *)
+  w "const etal_boot = () => {\n";
   w "  const rom = Uint8Array.from(atob(ETAL_ROM_B64), c => c.charCodeAt(0));\n";
   w "  emulator.load(rom);\n";
   w "  emulator.view = new View(emulator, ETAL_VIEW);\n";
-  w "});\n";
+  w "};\n";
+  w "(() => {\n";
+  w "  const init = emulator.uxn.init;\n";
+  w "  emulator.uxn.init = (...args) => {\n";
+  w "    const ready = Promise.resolve(init(...args));\n";
+  w "    ready.then(() => Promise.resolve().then(etal_boot));\n";
+  w "    return ready;\n";
+  w "  };\n";
+  w "})();\n";
+  w "emulator.init();\n";
   w "</script>\n</body>\n</html>\n";
   Buffer.contents buf
 

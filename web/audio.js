@@ -185,7 +185,7 @@ function Audio(emu)
 	   can be rendered twice without touching the live voice). Passing
 	   `out` as null makes this a counting pass. */
 	this.walk = (v, st, out) => {
-		const mem = this.emu.uxn.mem
+		const mem = this.emu.uxn.mem || this.emu.uxn.ram /* JS core: patched mem; wasm core: ram */
 		let n = 0
 		/* `!v.r` is uxn2's "no envelope" case (adsr == 0): it holds full
 		   amplitude forever, so only the sample end or the cap stops it. */
