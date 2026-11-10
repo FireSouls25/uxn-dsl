@@ -258,7 +258,14 @@ function Audio(emu)
 		}
 		const node = this.ctx.createBufferSource()
 		node.buffer = buffer
-		node.loop = v.repeat
+		/* The buffer already holds the whole note: a looping sample
+		   cycles inside the render until the envelope's release ends
+		   it (uxn2 stops the voice there too). Looping the buffer
+		   would replay the finished note forever, until something
+		   retriggers the voice. Only an envelope-less note (adsr 0,
+		   `!v.r`) sustains in uxn2, and its render is capped at
+		   MAX_RENDER, so that is the one case that must loop. */
+		node.loop = v.repeat && !v.r
 		node.connect(this.ctx.destination)
 		node.start()
 		v.node = node
