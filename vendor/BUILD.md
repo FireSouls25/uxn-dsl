@@ -152,56 +152,39 @@ cp /tmp/uxn2-macos src/vendor/macos-<arch>/uxn2
   payload next to the binary (payload tarballs already support
   sibling files).
 
-## macos-arm64 (done 2026-09-13, needs SDL2 fix + provenance)
+## macos-arm64 (committed copy is a stopgap; CI builds the real one)
 
-`vendor/macos-arm64/uxn2`, built on a MacBook Air arm64 via
-`zig build` from `uxn2/` (exact command + zig version: TODO —
-record from the build machine).
+The committed `vendor/macos-arm64/uxn2` (built on a MacBook Air,
+2026-09-13) is **not portable**: `LC_BUILD_VERSION minos 26.6.2` (it
+refuses older macOS) and it links `@rpath/SDL2.framework` with only
+`/usr/lib` as rpath, so it does not load on a stock Mac even with
+`brew install sdl2`. Releases replace it: CI's `build-vm`
+(macos-latest) builds SDL2 2.32.10 from source as a **static**
+library with `MACOSX_DEPLOYMENT_TARGET=11.0`, links uxn2 against it,
+ad-hoc signs it, and fails unless `otool -L` lists only
+`/System/Library/` and `/usr/lib/` entries. Result: runs on macOS 11+
+with nothing installed. The `etal` compiler selects this row on
+Darwin/arm64 (`host_row` in `src/target/target_native.ml`).
+`macos-x86_64` is not a target for now.
 
-- `file`: Mach-O 64-bit arm64 (verified in-repo).
-- `otool -L`: Cocoa, IOKit, CoreAudio, AudioToolbox, CoreVideo,
-  `@rpath/SDL2.framework/Versions/A/SDL2`, libSystem, libobjc.
-- **Open SDL2 problem (blocks running):** the binary wants
-  `SDL2.framework` via `@rpath` with no resolving `LC_RPATH`, and
-  stock macOS ships neither the framework nor Homebrew's
-  `libSDL2-2.0.0.dylib` under that path — `dyld: Library not
-  loaded`, abort. Pick one on the Mac and record it here:
-  (a) install `SDL2.framework` (libsdl.org dmg) to
-  `/Library/Frameworks` + `install_name_tool -add_rpath
-  /Library/Frameworks`, or export `DYLD_FRAMEWORK_PATH`;
-  (b) `brew install sdl2` + `install_name_tool -change` the
-  `@rpath/...` reference to `/opt/homebrew/lib/libSDL2-2.0.0.dylib`;
-  (c) rebuild against the Homebrew dylib (`-Dsdl-prefix`) so no
-  framework path is involved.
-- Still to record: `uxn2 -v` output, `codesign -s -` ad-hoc
-  signature status (required to run at all), compiler + SDL2
-  versions, `uname -m`.
-- The `etal` compiler selects this row automatically on
-  Darwin/arm64 (`host_row` in `src/target/target_native.ml`);
-  `macos-x86_64` remains TODO.
+## windows-x86_64 (done 2026-11-10, verified under wine 11.21)
 
-## windows-x86_64 (TODO — MinGW headers ship with zig)
+`vendor/windows-x86_64/uxn2.exe` + `SDL2.dll`, cross-built on Linux
+by `scripts/build-uxn2-windows.sh` (zig 0.17 `zig cc -target
+x86_64-windows-gnu`, uxn2 at the CI pin, SDL2 2.32.10 MinGW devel
+package). Upstream uxn2.c needs one shim on MinGW, force-included
+from `scripts/uxn2-win-compat.h`: POSIX `mkdir(path, mode)` becomes
+`_mkdir(path)`. CI's MSYS2 gcc row uses the same header.
 
-Vendored choice: MinGW-w64 build of **our** `uxn2.c` (same codebase
-and CLI contract as Linux/Mac; permissive license — unlike the
-all-rights-reserved `uxn32.c`). No MinGW install needed; SDL2 comes
-from the SDL2-devel mingw tarball (libsdl.org):
-
-```
-# 0. Unpack https://github.com/libsdl-org/SDL/releases SDL2-devel-*-mingw.tar.gz,
-#    note its x86_64-w64-mingw32 dir; optionally export PKG_CONFIG_PATH to its
-#    lib/pkgconfig so zig picks SDL2 flags from there instead of the host.
-# 1. From uxn2/:
-zig build -Dtarget=x86_64-windows-gnu -Dsdl-prefix=<devel>/x86_64-w64-mingw32
-# 2. Verify:
-file zig-out/bin/uxn2.exe       # want: PE32+ x86-64
-wine zig-out/bin/uxn2.exe -v    # smoke test without a Windows box (needs wine)
-```
-
-- Co-ship `SDL2.dll` (from the devel package's `bin/`) beside the
-  exe in the payload — Windows finds DLLs next to the executable,
-  no install needed. (The Windows `.exe` carrier is a separate
-  planned step; the VM row plugs into it unchanged.)
+- `file`: PE32+ executable (GUI) x86-64: no console window behind the
+  game (`--subsystem windows` / `-mwindows`).
+- Imports: `SDL2.dll` (co-shipped beside the exe), KERNEL32, SHELL32
+  and the Universal CRT (`api-ms-win-crt-*`, built into Windows 10+;
+  Windows 7/8 need the UCRT update).
+- Verified under wine: `-v`; a ROM printing to the console and
+  writing `sub/out.txt` through the File device (creates the
+  folder); the chess example from an `etal --target windows-x86_64`
+  zip via `run.bat`, played by hand.
 
 ## uxn5 pin (web)
 

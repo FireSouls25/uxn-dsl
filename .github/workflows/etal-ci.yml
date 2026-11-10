@@ -134,7 +134,10 @@ jobs:
     # GitHub's own macOS and Windows runners compile it, so no Mac or
     # Windows machine is needed. Same source everywhere (upstream uxn2
     # pinned below), same release intent as vendor/linux-x86_64
-    # (-DNDEBUG -O2, stripped, SDL2 dynamic). See vendor/BUILD.md.
+    # (-DNDEBUG -O2, stripped). SDL2 is dynamic on Linux (distro
+    # package), static on macOS (no Homebrew needed by players) and a
+    # DLL beside the exe on Windows. See vendor/BUILD.md. macOS Intel
+    # is not a target for now.
     name: build-vm uxn2 (${{ matrix.row }})
     # Every push to main and every tag (not PRs): a broken VM build
     # shows up right away instead of at release time.
@@ -147,8 +150,6 @@ jobs:
             os: ubuntu-24.04-arm
           - row: macos-arm64
             os: macos-latest
-          - row: macos-x86_64
-            os: macos-15-intel
           - row: windows-x86_64
             os: windows-latest
     runs-on: ${{ matrix.os }}
@@ -156,6 +157,8 @@ jobs:
       UXN2_REPO: https://git.sr.ht/~rabbits/uxn2
       UXN2_COMMIT: 8794ea557cdf282968d3e0fc93714840a42b245c
     steps:
+      - uses: actions/checkout@v5
+
       - name: Fetch uxn2 source (pinned commit)
         run: |
           git clone --quiet "$UXN2_REPO" uxn2src
@@ -174,19 +177,34 @@ jobs:
           file out/uxn2
           ./out/uxn2 -v
 
-      - name: Build uxn2 (macOS, Homebrew SDL2)
-        # Links Homebrew's libSDL2 (/opt/homebrew on Apple silicon,
-        # /usr/local on Intel): players `brew install sdl2`, which the
-        # bundle stub already tells them. Ad-hoc signed so it runs.
+      - name: Build uxn2 (macOS, static SDL2, macOS 11+)
+        # SDL2 is built from source as a static library with an 11.0
+        # deployment target, so the VM needs only system frameworks
+        # (no Homebrew on the player's Mac) and runs on macOS 11+.
+        # Ad-hoc signed so Apple silicon runs it.
         if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+          SDL_VER: "2.32.10"
         run: |
-          brew install sdl2
+          curl -sSLf -o sdl.tgz "https://github.com/libsdl-org/SDL/releases/download/release-$SDL_VER/SDL2-$SDL_VER.tar.gz"
+          tar xzf sdl.tgz
+          cmake -S "SDL2-$SDL_VER" -B sdlbuild -DCMAKE_BUILD_TYPE=Release -DSDL_SHARED=OFF -DSDL_STATIC=ON \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_INSTALL_PREFIX="$PWD/sdl"
+          cmake --build sdlbuild -j 4
+          cmake --install sdlbuild
           mkdir -p out
-          cc $(sdl2-config --cflags) -DNDEBUG -O2 -g0 uxn2src/src/uxn2.c -o out/uxn2 $(sdl2-config --libs)
+          cc -mmacosx-version-min=11.0 $(sdl/bin/sdl2-config --cflags) -DNDEBUG -O2 -g0 uxn2src/src/uxn2.c \
+            -o out/uxn2 $(sdl/bin/sdl2-config --static-libs)
           strip out/uxn2
           codesign --force -s - out/uxn2
           file out/uxn2
           otool -L out/uxn2
+          otool -l out/uxn2 | grep -A3 LC_BUILD_VERSION
+          # Portability gate: system libraries and frameworks only.
+          if otool -L out/uxn2 | tail -n +2 | grep -vE '^\s+(/System/Library/|/usr/lib/)'; then
+            echo "uxn2 links a non-system library (see above)" >&2; exit 1
+          fi
           ./out/uxn2 -v
 
       - name: Set up MSYS2 (Windows)
@@ -203,8 +221,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
+          # The compat header maps uxn2's POSIX mkdir(path, mode) to
+          # MinGW's _mkdir (same as scripts/build-uxn2-windows.sh).
+          # -mwindows: GUI subsystem, no console window behind the game.
           mkdir -p out
-          gcc $(sdl2-config --cflags) -DNDEBUG -O2 -g0 -s uxn2src/src/uxn2.c -o out/uxn2.exe $(sdl2-config --libs)
+          gcc $(sdl2-config --cflags) -DNDEBUG -O2 -g0 -s -include scripts/uxn2-win-compat.h \
+            uxn2src/src/uxn2.c -o out/uxn2.exe $(sdl2-config --libs) -mwindows
           cp /mingw64/bin/SDL2.dll out/
           file out/uxn2.exe
           ldd out/uxn2.exe | grep -iv '/c/windows' || true
