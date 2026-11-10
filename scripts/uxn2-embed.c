@@ -6,7 +6,8 @@
 
        [this VM][game.rom][footer]
 
-   as one .exe. The footer is the last 16 bytes:
+   as one .exe (and, for the unix rows, as one ELF / Mach-O). The
+   footer is the last 16 bytes:
 
        "ETALROM1"  magic (8 bytes)
        u32 LE      ROM length
@@ -27,6 +28,9 @@
 #define getpid _getpid
 #else
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #endif
 
 int uxn2_main(int argc, char **argv);
@@ -48,6 +52,9 @@ self_path(char *buf, size_t n)
 #ifdef _WIN32
 	DWORD r = GetModuleFileNameA(NULL, buf, (DWORD)n);
 	return r > 0 && r < n;
+#elif defined(__APPLE__)
+	uint32_t size = (uint32_t)n;
+	return _NSGetExecutablePath(buf, &size) == 0;
 #else
 	ssize_t r = readlink("/proc/self/exe", buf, n - 1);
 	if(r <= 0) return 0;

@@ -172,7 +172,12 @@ jobs:
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q libsdl2-dev
           mkdir -p out
-          cc $(sdl2-config --cflags) -DNDEBUG -O2 -g0 uxn2src/src/uxn2.c -o out/uxn2 $(sdl2-config --libs)
+          # uxn2-embed.c owns main, so etal can append a ROM and ship
+          # one executable (see scripts/build-uxn2-linux.sh).
+          CF="$(sdl2-config --cflags) -DNDEBUG -O2 -g0"
+          cc $CF -DSDL_MAIN_HANDLED -Dmain=uxn2_main -c uxn2src/src/uxn2.c -o uxn2.o
+          cc $CF -c scripts/uxn2-embed.c -o embed.o
+          cc embed.o uxn2.o -o out/uxn2 $(sdl2-config --libs)
           strip out/uxn2
           file out/uxn2
           ./out/uxn2 -v
@@ -194,8 +199,12 @@ jobs:
           cmake --build sdlbuild -j 4
           cmake --install sdlbuild
           mkdir -p out
-          cc -mmacosx-version-min=11.0 $(sdl/bin/sdl2-config --cflags) -DNDEBUG -O2 -g0 uxn2src/src/uxn2.c \
-            -o out/uxn2 $(sdl/bin/sdl2-config --static-libs)
+          # The embed wrapper is built in too (etal keeps the sh carrier
+          # for macOS until appended ROMs are tested with Gatekeeper).
+          CF="-mmacosx-version-min=11.0 $(sdl/bin/sdl2-config --cflags) -DNDEBUG -O2 -g0"
+          cc $CF -DSDL_MAIN_HANDLED -Dmain=uxn2_main -c uxn2src/src/uxn2.c -o uxn2.o
+          cc $CF -c scripts/uxn2-embed.c -o embed.o
+          cc -mmacosx-version-min=11.0 embed.o uxn2.o -o out/uxn2 $(sdl/bin/sdl2-config --static-libs)
           strip out/uxn2
           codesign --force -s - out/uxn2
           file out/uxn2

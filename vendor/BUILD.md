@@ -72,15 +72,18 @@ backend libs (X11/ALSA/...) stay dynamic too. Fully-static builds
 were tried and dropped: no static SDL2/X11/ALSA archives ship on
 stock distros, and static audio backends break runtime dlopen.
 
-## linux-x86_64 (done, verified)
+## linux-x86_64 (done, verified; single-file since 2026-11-10)
 
-`zig build -Dtarget=x86_64-linux-gnu.2.17 -Dsys-libdir=/usr/lib`
-(Zig 0.16.0, this machine):
-
-- Floor proof: max requirement in `readelf -V` is `GLIBC_2.17`
-  (~2014+ distros). `ldd` shows dynamic SDL2 + libc/X11/ALSA.
-- The bundle stub preflights (`uxn2 -v`) and prints SDL2 install
-  help when the library is absent.
+`vendor/linux-x86_64/uxn2` is built by `scripts/build-uxn2-linux.sh`
+(zig 0.17, `-target x86_64-linux-gnu.2.17`, uxn2 at the CI pin) with
+`scripts/uxn2-embed.c` around uxn2's main, so `etal --target
+linux-x86_64` writes `[uxn2][rom][footer]` as one executable ELF
+(format: see windows-x86_64 below). Without a footer it is plain
+uxn2, which is what the compiler assembles with on Linux hosts.
+SDL2 stays dynamic (`NEEDED`: libSDL2-2.0.so.0, libc; glibc floor
+2.14); `tests/portability.sh vendor/linux-x86_64/uxn2` passes. The
+linux-aarch64 row gets the same wrapper from CI's build-vm; a VM
+without it (older releases) makes etal fall back to the sh stub.
 
 ## Old-distro execution proof (done 2026-09-06, re-runnable)
 

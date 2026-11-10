@@ -1,5 +1,7 @@
 (* Native bundle backends: unix rows use a sh stub + tar.gz payload,
- * the Windows row is one .exe (the VM with the ROM appended).
+ * the Windows row is one .exe and the Linux rows one ELF (the VM with
+ * the ROM appended, see bundle_embedded) when their VM is built with
+ * scripts/uxn2-embed.c; other rows (macOS, older VMs) keep the stub.
  *
  * Output is a self-contained executable: the vendored uxn vm plus the
  * assembled ROM. Running it launches the ROM in the vm. Extra
@@ -221,11 +223,17 @@ let bundle ~verbose ~uxn2_path ~rom_path ~output_file ~window =
    flags: 1 = fullscreen, 2 = 2x window (the same choice vm_args makes
    for the unix rows). Windows ignores bytes after the PE image, so
    the result is an ordinary executable. *)
-let bundle_windows_exe ~verbose ~row ~uxn2_path ~rom_path ~output_file ~window =
-  let vm = Target.read_file_bin uxn2_path in
+let embed_capable vm =
+  (* The wrapper carries the magic as a string literal. *)
+  let m = "ETALROM1" in
+  let n = String.length vm and k = String.length m in
+  let rec go i = i + k <= n && (String.sub vm i k = m || go (i + 1)) in
+  go 0
+
+let bundle_embedded ~verbose ~row ~vm ~rom_path ~output_file ~window =
   let rom = Target.read_file_bin rom_path in
   let len = String.length rom in
-  if len = 0 || len > 0x10000 then (eprintf "Error: ROM size %d does not fit the windows carrier\n" len; exit 1);
+  if len = 0 || len > 0x10000 then (eprintf "Error: ROM size %d does not fit a single-file bundle\n" len; exit 1);
   let args = vm_args window in
   let flags = (if List.mem "-f" args then 1 else 0) lor (if List.mem "-2" args then 2 else 0) in
   let footer = Bytes.make 16 '\000' in
@@ -240,7 +248,19 @@ let bundle_windows_exe ~verbose ~row ~uxn2_path ~rom_path ~output_file ~window =
   output_string oc rom;
   output_bytes oc footer;
   close_out oc;
-  if verbose then eprintf "Wrote windows exe for row %s to %s (%d + %d bytes)\n" row output_file (String.length vm) len
+  if not (is_windows_row row) then Unix.chmod output_file 0o755;
+  if verbose then eprintf "Wrote single-file %s bundle to %s (%d + %d bytes)\n" row output_file (String.length vm) len
+
+(* What --target <row> produces (for --list-targets): "exe" (Windows),
+   "elf" (Linux with an embed-capable VM) or "sh+tar.gz" (the stub). *)
+let carrier_of_row row =
+  if is_windows_row row then "exe"
+  else
+    let linux = String.length row > 6 && String.sub row 0 6 = "linux-" in
+    match uxn2_path_for_row row with
+    | path when linux && embed_capable (Target.read_file_bin path) -> "elf"
+    | _ -> "sh+tar.gz"
+    | exception Failure _ -> "sh+tar.gz"
 
 (* Bundle for an explicit row. Unix rows reuse the sh+tar.gz carrier
    with that row's VM; the Windows row uses the zip carrier. *)
@@ -250,7 +270,16 @@ let bundle_for_row ~verbose ~row ~rom_path ~output_file ~window =
       row (String.concat ", " known_rows));
   let uxn2_path = uxn2_path_for_row row in
   if verbose then eprintf "Using uxn2 row %s: %s\n" row uxn2_path;
-  if is_windows_row row then
-    bundle_windows_exe ~verbose ~row ~uxn2_path ~rom_path ~output_file ~window
+  let vm = Target.read_file_bin uxn2_path in
+  let linux = String.length row > 6 && String.sub row 0 6 = "linux-" in
+  if is_windows_row row then begin
+    if not (embed_capable vm) then
+      failwith (Printf.sprintf "%s: this uxn2.exe cannot carry a ROM (build it with scripts/build-uxn2-windows.sh)" uxn2_path);
+    bundle_embedded ~verbose ~row ~vm ~rom_path ~output_file ~window
+  end
+  else if linux && embed_capable vm then
+    bundle_embedded ~verbose ~row ~vm ~rom_path ~output_file ~window
   else
+    (* macOS: appending to a signed Mach-O needs testing on a Mac
+       (Gatekeeper); older VMs lack the wrapper. *)
     bundle ~verbose ~uxn2_path ~rom_path ~output_file ~window
