@@ -1793,8 +1793,16 @@ let codegen_program program =
   Buffer.add_string buf "\n";
   Buffer.add_string buf (Buffer.contents env.entry_code);
   Buffer.add_string buf "\n";
-  Buffer.add_string buf (Buffer.contents env.code);
-  Buffer.add_string buf "\n";
+
+  (* Data, strings and buffers go BEFORE code. Every reference the
+     frame code makes to a sprite blob, a string or a buffer would
+     otherwise be a forward reference, and drifblim caps those
+     (~1200 per ROM): a 65-leaf scene with full rules blows the
+     budget before a single function is even assembled. Declared
+     here, every one of those references assembles backwards and the
+     table stays for what genuinely points forward (calls to
+     later-defined functions and local forward jumps). ROM bytes move
+     around, but everything is symbolic so nothing observes it. *)
   Buffer.add_string buf (Buffer.contents env.data);
 
   if List.length env.strings > 0 then begin
@@ -1804,15 +1812,19 @@ let codegen_program program =
     ) env.strings
   end;
 
-  (* Reserve writable buffers AFTER all emitted bytes. Fixed origins
-     could move the assembler backwards into code (chess exceeds 8KB).
-     References already use labels, so the assembler resolves their
-     final addresses. Reservation sizes, like all TAL numbers, are hex. *)
+  (* Writable buffers live here (after entry, before code) for the
+     same reason as data above: every ox/oy/ot/oflags/board access in
+     generated code must assemble backwards. Reservation sizes, like
+     all TAL numbers, are hex. *)
   if List.length env.buffer_order > 0 then begin
     Buffer.add_string buf "\n";
     List.iter (fun (name, _, total) ->
       Buffer.add_string buf (sprintf "@%s $%x\n" name total)
     ) env.buffer_order;
   end;
+
+  Buffer.add_string buf "\n";
+  Buffer.add_string buf (Buffer.contents env.code);
+  Buffer.add_string buf "\n";
 
   Buffer.contents buf
