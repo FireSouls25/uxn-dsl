@@ -38,6 +38,14 @@ int uxn2_main(int argc, char **argv);
 #define FOOTER 16
 #define MAX_ROM 0x10000
 
+/* Tells etal this VM can carry a ROM. The footer magic alone is not
+   enough: gcc turns memcmp(foot, "ETALROM1", 8) into one 64-bit
+   compare, and the text vanishes from the binary. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((used))
+#endif
+const char etal_embed_marker[] = "ETAL-EMBED-CAPABLE-1";
+
 static char rom_path[4096];
 
 static void

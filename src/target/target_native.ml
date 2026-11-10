@@ -224,11 +224,13 @@ let bundle ~verbose ~uxn2_path ~rom_path ~output_file ~window =
    for the unix rows). Windows ignores bytes after the PE image, so
    the result is an ordinary executable. *)
 let embed_capable vm =
-  (* The wrapper carries the magic as a string literal. *)
-  let m = "ETALROM1" in
-  let n = String.length vm and k = String.length m in
-  let rec go i = i + k <= n && (String.sub vm i k = m || go (i + 1)) in
-  go 0
+  (* The wrapper's explicit marker; older builds only show the footer
+     magic (as a string literal, unless gcc folded the compare). *)
+  let has m =
+    let n = String.length vm and k = String.length m in
+    let rec go i = i + k <= n && (String.sub vm i k = m || go (i + 1)) in
+    go 0 in
+  has "ETAL-EMBED-CAPABLE-1" || has "ETALROM1"
 
 let bundle_embedded ~verbose ~row ~vm ~rom_path ~output_file ~window =
   let rom = Target.read_file_bin rom_path in
