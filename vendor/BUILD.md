@@ -21,6 +21,19 @@ src/vendor/
   windows-x86_64/          # TODO: MinGW cross-build (instructions below)
 ```
 
+## CI builds them (no Mac or Windows machine needed)
+
+`.github/workflows/etal-ci.yml` → job `build-vm` compiles upstream
+uxn2 (pinned commit in the job env) on GitHub's own runners:
+`macos-latest` (arm64), `macos-15-intel` (x86_64) with Homebrew SDL2,
+and `windows-latest` with MSYS2 MinGW-w64 + SDL2 (`SDL2.dll` shipped
+beside `uxn2.exe`). It runs on version tags and on manual runs
+(Actions → etal-ci → Run workflow). The release job drops each VM into
+`vendor/<row>/` of every release package, so a Linux backend using
+that release can bundle games for every OS. A VM that fails to build
+doesn't block the release; that row just stays unvendored. The
+manual recipes below remain the way to build one locally.
+
 ## Same flags on every platform?
 
 Same **source** (`uxn2/src/uxn2.c` in this repo) and same intent

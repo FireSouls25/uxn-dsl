@@ -38,6 +38,9 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+  # Manual runs also build the per-OS game VMs (to try them without
+  # tagging a release).
+  workflow_dispatch:
 
 defaults:
   run:
@@ -122,6 +125,77 @@ jobs:
           name: actual-tal-${{ matrix.name }}
           path: ci.actual.tal
 
+  build-vm:
+    # The game VM (uxn2) for the OSes this Linux dev box can't build:
+    # GitHub's own macOS and Windows runners compile it, so no Mac or
+    # Windows machine is needed. Same source everywhere (upstream uxn2
+    # pinned below), same release intent as vendor/linux-x86_64
+    # (-DNDEBUG -O2, stripped, SDL2 dynamic). See vendor/BUILD.md.
+    name: build-vm uxn2 (${{ matrix.row }})
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - row: macos-arm64
+            os: macos-latest
+          - row: macos-x86_64
+            os: macos-15-intel
+          - row: windows-x86_64
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    env:
+      UXN2_REPO: https://git.sr.ht/~rabbits/uxn2
+      UXN2_COMMIT: 8794ea557cdf282968d3e0fc93714840a42b245c
+    steps:
+      - name: Fetch uxn2 source (pinned commit)
+        run: |
+          git clone --quiet "$UXN2_REPO" uxn2src
+          git -C uxn2src checkout --quiet "$UXN2_COMMIT"
+
+      - name: Build uxn2 (macOS, Homebrew SDL2)
+        # Links Homebrew's libSDL2 (/opt/homebrew on Apple silicon,
+        # /usr/local on Intel): players `brew install sdl2`, which the
+        # bundle stub already tells them. Ad-hoc signed so it runs.
+        if: runner.os == 'macOS'
+        run: |
+          brew install sdl2
+          mkdir -p out
+          cc $(sdl2-config --cflags) -DNDEBUG -O2 -g0 uxn2src/src/uxn2.c -o out/uxn2 $(sdl2-config --libs)
+          strip out/uxn2
+          codesign --force -s - out/uxn2
+          file out/uxn2
+          otool -L out/uxn2
+          ./out/uxn2 -v
+
+      - name: Set up MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-SDL2
+
+      - name: Build uxn2.exe (Windows, MinGW + SDL2.dll beside it)
+        # The zip carrier co-ships SDL2.dll from the row dir, so
+        # players need nothing installed (Windows loads DLLs next to
+        # the exe).
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          mkdir -p out
+          gcc $(sdl2-config --cflags) -DNDEBUG -O2 -g0 -s uxn2src/src/uxn2.c -o out/uxn2.exe $(sdl2-config --libs)
+          cp /mingw64/bin/SDL2.dll out/
+          file out/uxn2.exe
+          ldd out/uxn2.exe | grep -iv '/c/windows' || true
+
+      - name: Upload VM
+        uses: actions/upload-artifact@v5
+        with:
+          name: vm-${{ matrix.row }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     # Compiler-only releases (no games): each artifact is the etal
     # binary plus the vendor/ tree (VMs, assembler, web emulator), so
@@ -131,8 +205,10 @@ jobs:
     # No toolchain here: the binary comes from the build-test job's artifact
     # (same bytes CI validated), so release needs no OCaml/opam/dune.
     name: package-release etal (${{ matrix.asset }})
-    needs: [build-test]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-test, build-vm]
+    # A VM that fails to build (one OS) must not block the compiler
+    # release: that row just stays unvendored ("coming soon").
+    if: ${{ !cancelled() && needs.build-test.result == 'success' && startsWith(github.ref, 'refs/tags/v') }}
     strategy:
       fail-fast: false
       matrix:
@@ -157,6 +233,26 @@ jobs:
         with:
           name: etal-${{ matrix.name }}
           path: pkg
+
+      - name: Download the per-OS game VMs
+        uses: actions/download-artifact@v5
+        with:
+          pattern: vm-*
+          path: vms
+
+      - name: Vendor the fresh VMs (every package carries every OS)
+        # A Linux backend with this release can then build macOS and
+        # Windows downloads too: bundling only packages a VM next to
+        # the ROM. Artifacts drop the exec bit, so restore it.
+        run: |
+          for d in vms/vm-*; do
+            [ -d "$d" ] || continue
+            row="${d#vms/vm-}"
+            mkdir -p "vendor/$row"
+            cp -R "$d"/. "vendor/$row/"
+            chmod +x "vendor/$row"/uxn2* || true
+          done
+          ls -R vendor | head -n 40
 
       - name: Stage release package (compiler + vendor tree)
         run: |
